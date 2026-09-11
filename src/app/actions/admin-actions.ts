@@ -12,10 +12,12 @@ import { formatPriceWithUnit } from '@/lib/units';
 import { generateCartWhatsAppUrl, generateOrderWhatsAppUrl } from '@/lib/whatsapp';
 import { sendOrderConfirmationEmail } from '@/lib/email';
 import { mapDbCatalogItemToItem, mapDbOrderToOrder } from '@/lib/supabase-mappers';
+import { getPersistentBrandCatalog } from '@/lib/catalog-service';
 
 function safeRevalidatePath(path: string) {
   try {
     revalidatePath(path);
+    revalidatePath(path, 'page');
   } catch {
     // Graceful no-op in headless/test environments where Next static generation store is not initialized
   }
@@ -414,58 +416,21 @@ export async function getAdminCatalogAction(brandId: string) {
 }
 
 export async function getPublicCatalogAction(brandId: string) {
-  if (isSupabaseConfigured) {
-    const supabase = getSupabaseServer();
-    if (supabase) {
-      try {
-        const [itemsRes, catsRes] = await Promise.all([
-          supabase
-            .from('catalog_items')
-            .select('*, images:product_images(*)')
-            .eq('brand_id', brandId)
-            .eq('is_active', true)
-            .order('created_at', { ascending: false }),
-          supabase
-            .from('categories')
-            .select('*')
-            .eq('brand_id', brandId)
-            .eq('is_active', true)
-            .order('sort_order', { ascending: true }),
-        ]);
-
-        if (!itemsRes.error && itemsRes.data && itemsRes.data.length > 0) {
-          const mappedItems = itemsRes.data.map(mapDbCatalogItemToItem);
-          const mappedCats: Category[] = (catsRes.data || []).map((c: any) => ({
-            id: c.id,
-            brandId: c.brand_id,
-            name: c.name,
-            slug: c.slug,
-            description: c.description || undefined,
-            sortOrder: c.sort_order || 0,
-            isActive: c.is_active !== false,
-          }));
-
-          for (const item of mappedItems) {
-            dataRepository.addCatalogItem(item);
-          }
-
-          return {
-            success: true,
-            items: mappedItems,
-            categories: mappedCats,
-          };
-        }
-      } catch (err) {
-        console.error('[getPublicCatalogAction] Error:', err);
-      }
-    }
+  try {
+    const catalogData = await getPersistentBrandCatalog(brandId);
+    return {
+      success: true,
+      items: catalogData.allItems,
+      categories: catalogData.categories,
+    };
+  } catch (err) {
+    console.error('[getPublicCatalogAction] Error loading public catalog:', err);
+    return {
+      success: true,
+      items: dataRepository.getCatalogItems(brandId),
+      categories: dataRepository.getCategoriesByBrand(brandId),
+    };
   }
-
-  return {
-    success: true,
-    items: dataRepository.getCatalogItems(brandId),
-    categories: dataRepository.getCategoriesByBrand(brandId),
-  };
 }
 
 

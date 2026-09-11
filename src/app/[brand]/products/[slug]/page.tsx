@@ -19,6 +19,10 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { ProductDetailActions } from './ProductDetailActions';
+import { getPersistentProductBySlug } from '@/lib/catalog-service';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 interface ProductDetailPageProps {
   params: Promise<{ brand: string; slug: string }>;
@@ -27,23 +31,7 @@ interface ProductDetailPageProps {
 export async function generateMetadata({ params }: ProductDetailPageProps): Promise<Metadata> {
   const { brand: brandId, slug } = await params;
   const brand = dataRepository.getBrand(brandId);
-  let item = dataRepository.getItemBySlug(brandId, slug);
-
-  if (!item && isSupabaseConfigured) {
-    const supabase = getSupabaseServer();
-    if (supabase) {
-      const { data: dbItem } = await supabase
-        .from('catalog_items')
-        .select('*, images:product_images(*)')
-        .eq('brand_id', brandId)
-        .eq('slug', slug)
-        .single();
-      if (dbItem) {
-        item = mapDbCatalogItemToItem(dbItem);
-        dataRepository.addCatalogItem(item);
-      }
-    }
-  }
+  const item = await getPersistentProductBySlug(brandId, slug);
 
   if (!brand || !item) return {};
 
@@ -61,23 +49,7 @@ export async function generateMetadata({ params }: ProductDetailPageProps): Prom
 export default async function ProductDetailPage({ params }: ProductDetailPageProps) {
   const { brand: brandId, slug } = await params;
   const brand = dataRepository.getBrand(brandId);
-  let item = dataRepository.getItemBySlug(brandId, slug);
-
-  if (!item && isSupabaseConfigured) {
-    const supabase = getSupabaseServer();
-    if (supabase) {
-      const { data: dbItem } = await supabase
-        .from('catalog_items')
-        .select('*, images:product_images(*)')
-        .eq('brand_id', brandId)
-        .eq('slug', slug)
-        .single();
-      if (dbItem) {
-        item = mapDbCatalogItemToItem(dbItem);
-        dataRepository.addCatalogItem(item);
-      }
-    }
-  }
+  const item = await getPersistentProductBySlug(brandId, slug);
 
   if (!brand || !item) {
     notFound();

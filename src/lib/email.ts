@@ -10,13 +10,14 @@ interface EmailResult {
 
 // Create reusable SMTP transporter
 function getTransporter() {
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = parseInt(process.env.SMTP_PORT || '465', 10);
-  const user = process.env.SMTP_USER || '';
-  const pass = process.env.SMTP_PASSWORD || '';
+  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const rawPort = (process.env.SMTP_PORT || '465').trim();
+  const port = parseInt(rawPort, 10) || 465;
+  const user = (process.env.SMTP_USER || '').trim().replace(/^["']|["']$/g, '');
+  const pass = (process.env.SMTP_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
 
   if (!user || !pass) {
-    console.warn('[Email] SMTP credentials not configured (SMTP_USER / SMTP_PASSWORD missing)');
+    console.warn('[Email] SMTP credentials not configured (SMTP_USER or SMTP_PASSWORD missing in environment)');
     return null;
   }
 
@@ -28,6 +29,9 @@ function getTransporter() {
       user,
       pass,
     },
+    connectionTimeout: 12000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
 }
 
@@ -200,6 +204,51 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
 }
 
 /**
+ * Generate clean plaintext fallback for order confirmation (prevents spam flags)
+ */
+export function generateOrderConfirmationEmailText(order: Order, brand: BrandConfig): string {
+  const items = order.items || [];
+  const itemsList = items
+    .map((i) => `* ${i.productName} (Qty: ${i.quantity}, ${i.unitType}) — Rs. ${Number(i.lineTotal).toLocaleString('en-IN')}`)
+    .join('\n');
+
+  return `
+ORDER CONFIRMATION — ${order.invoiceNumber}
+${brand.name}
+${brand.tagline}
+
+Dear ${order.customerName},
+
+Thank you for your order with ${brand.name}! Your order has been officially CONFIRMED.
+
+INVOICE DETAILS:
+- Invoice Number: ${order.invoiceNumber}
+- Customer Name: ${order.customerName}
+- Phone: ${order.customerPhone}
+- Delivery Method: ${order.deliveryMethod === 'HOME_DELIVERY' ? 'Doorstep Delivery in Coimbatore' : 'Direct Store Pickup'}
+- Status: CONFIRMED
+- Date: ${new Date(order.confirmedAt || order.createdAt).toLocaleDateString('en-IN')}
+
+ITEMS ORDERED:
+${itemsList}
+
+PAYMENT SUMMARY:
+- Subtotal: Rs. ${Number(order.subtotal).toLocaleString('en-IN')}
+- Savings: Rs. ${Number(order.savings).toLocaleString('en-IN')}
+- Total Amount: Rs. ${Number(order.totalAmount).toLocaleString('en-IN')}
+
+STORE INFORMATION:
+${brand.name}
+Address: ${brand.address}
+Phone: +91 ${brand.phonePrimary}
+WhatsApp: +91 ${brand.whatsappNumber}
+Hours: ${brand.openingTime} - ${brand.closingTime} (${brand.holiday ? 'Holiday: ' + brand.holiday : 'Open All Days'})
+
+This is an official automated confirmation receipt for invoice ${order.invoiceNumber}. Please retain for your records.
+`.trim();
+}
+
+/**
  * Dispatch branded order confirmation email
  */
 export async function sendOrderConfirmationEmail(order: Order): Promise<EmailResult> {
@@ -208,21 +257,31 @@ export async function sendOrderConfirmationEmail(order: Order): Promise<EmailRes
     if (!transporter) {
       return {
         success: false,
-        error: 'SMTP not configured. Environment variables SMTP_USER or SMTP_PASSWORD missing.',
+        error: 'SMTP not configured. Environment variables SMTP_USER or SMTP_PASSWORD missing in Vercel settings.',
       };
     }
 
     const brand = BRANDS[order.brandId] || BRANDS.aquarium;
     const emailHtml = generateOrderConfirmationEmailHtml(order, brand);
-    const subject = `Order Confirmed — ${order.invoiceNumber}`;
-    const fromAddress = `"${brand.name}" <${process.env.SMTP_USER}>`;
+    const emailText = generateOrderConfirmationEmailText(order, brand);
+    const subject = `Order Confirmed — ${order.invoiceNumber} | ${brand.name}`;
+    const senderEmail = (process.env.SMTP_USER || '').trim().replace(/^["']|["']$/g, '');
+    const fromAddress = `"${brand.name}" <${senderEmail}>`;
 
     const info = await transporter.sendMail({
       from: fromAddress,
       to: order.customerEmail,
+      replyTo: `"${brand.name}" <${senderEmail}>`,
+      sender: senderEmail,
       subject,
+      text: emailText,
       html: emailHtml,
+      headers: {
+        'X-Entity-Ref-ID': order.invoiceNumber,
+      },
     });
+
+    console.log(`[Email] Order confirmation sent for ${order.invoiceNumber} to ${order.customerEmail}. Message ID: ${info.messageId}`);
 
     return {
       success: true,

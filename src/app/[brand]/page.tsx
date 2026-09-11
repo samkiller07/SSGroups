@@ -28,6 +28,10 @@ import {
   Shield
 } from 'lucide-react';
 import { generateGeneralInquiryWhatsAppUrl } from '@/lib/whatsapp';
+import { getPersistentBrandCatalog } from '@/lib/catalog-service';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 interface BrandHomePageProps {
   params: Promise<{ brand: string }>;
@@ -35,18 +39,12 @@ interface BrandHomePageProps {
 
 export default async function BrandHomePage({ params }: BrandHomePageProps) {
   const { brand: brandId } = await params;
-  const brand = dataRepository.getBrand(brandId);
+  const catalogData = await getPersistentBrandCatalog(brandId);
+  const { brand, categories, heroOfferItems, dailyStatuses, featuredProducts, specializedServices, allItems } = catalogData;
 
   if (!brand) {
     notFound();
   }
-
-  const categories = dataRepository.getCategoriesByBrand(brand.id);
-  const heroOfferItems = dataRepository.getCatalogItems(brand.id, { isHeroOffer: true });
-  const dailyStatuses = dataRepository.getActiveDailyStatusesForBrand(brand.id);
-  const featuredProducts = dataRepository.getCatalogItems(brand.id, { itemType: 'PRODUCT', isFeatured: true });
-  const specializedServices = dataRepository.getCatalogItems(brand.id, { itemType: 'SERVICE' });
-  const allItems = dataRepository.getCatalogItems(brand.id);
 
   const generalWhatsApp = generateGeneralInquiryWhatsAppUrl(brand);
 
