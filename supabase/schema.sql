@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS public.brands (
 
 -- 2. CATEGORIES TABLE
 CREATE TABLE IF NOT EXISTS public.categories (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id TEXT PRIMARY KEY,
     brand_id TEXT NOT NULL REFERENCES public.brands(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
@@ -53,9 +53,9 @@ CREATE INDEX IF NOT EXISTS idx_categories_brand_active ON public.categories(bran
 
 -- 3. CATALOG ITEMS (PRODUCTS & SERVICES) TABLE
 CREATE TABLE IF NOT EXISTS public.catalog_items (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id TEXT PRIMARY KEY,
     brand_id TEXT NOT NULL REFERENCES public.brands(id) ON DELETE CASCADE,
-    category_id UUID REFERENCES public.categories(id) ON DELETE SET NULL,
+    category_id TEXT REFERENCES public.categories(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
     item_type TEXT NOT NULL CHECK (item_type IN ('PRODUCT', 'SERVICE')),
@@ -83,8 +83,8 @@ CREATE INDEX IF NOT EXISTS idx_catalog_hero_offers ON public.catalog_items(brand
 
 -- 4. PRODUCT IMAGES TABLE
 CREATE TABLE IF NOT EXISTS public.product_images (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    catalog_item_id UUID NOT NULL REFERENCES public.catalog_items(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    catalog_item_id TEXT NOT NULL REFERENCES public.catalog_items(id) ON DELETE CASCADE,
     image_url TEXT NOT NULL,
     alt_text TEXT,
     sort_order INT DEFAULT 0,

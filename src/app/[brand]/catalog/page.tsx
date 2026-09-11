@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { dataRepository } from '@/lib/data-store';
 import { ProductCard } from '@/components/ProductCard';
+import { getPublicCatalogAction } from '@/app/actions/admin-actions';
+import { CatalogItem, Category } from '@/types';
 import { 
   Search, 
   Layers, 
@@ -20,7 +22,8 @@ function CatalogContent() {
   const brandId = params.brand as string;
 
   const brand = dataRepository.getBrand(brandId);
-  const categories = dataRepository.getCategoriesByBrand(brandId);
+  const [categories, setCategories] = useState<Category[]>(() => dataRepository.getCategoriesByBrand(brandId));
+  const [allItems, setAllItems] = useState<CatalogItem[]>(() => dataRepository.getCatalogItems(brandId));
 
   const initialCategory = searchParams.get('category') || 'ALL';
   const initialType = (searchParams.get('type') as 'ALL' | 'PRODUCT' | 'SERVICE') || 'ALL';
@@ -32,7 +35,18 @@ function CatalogContent() {
   const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
-  const allItems = dataRepository.getCatalogItems(brandId);
+  // Sync with persistent Supabase catalog
+  useEffect(() => {
+    if (!brandId) return;
+    getPublicCatalogAction(brandId)
+      .then((res) => {
+        if (res && res.success) {
+          if (res.items && res.items.length > 0) setAllItems(res.items);
+          if (res.categories && res.categories.length > 0) setCategories(res.categories);
+        }
+      })
+      .catch((err) => console.error('[Catalog] Error loading public catalog:', err));
+  }, [brandId]);
 
   // Filtered & Sorted items
   const filteredItems = useMemo(() => {

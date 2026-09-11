@@ -139,21 +139,27 @@ class DataRepository {
     return this.catalogItems.find((item) => item.id === id);
   }
 
-  public addCatalogItem(item: Omit<CatalogItem, 'id' | 'createdAt' | 'updatedAt'>): CatalogItem {
+  public addCatalogItem(item: Partial<CatalogItem> & Omit<CatalogItem, 'createdAt' | 'updatedAt'>): CatalogItem {
     const category = this.categories.find((c) => c.id === item.categoryId);
     const now = new Date().toISOString();
+    const itemId = item.id || `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newItem: CatalogItem = {
       ...item,
-      id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      categoryName: category?.name,
+      id: itemId,
+      categoryName: category?.name || item.categoryName,
       unitType: item.unitType || (item.itemType === 'SERVICE' ? 'service' : 'piece'),
       unitValue: item.unitValue || 1,
       stockQuantity: item.itemType === 'SERVICE' ? null : (item.stockQuantity ?? 10),
       isClientVerified: item.isClientVerified ?? false,
-      createdAt: now,
+      createdAt: item.createdAt || now,
       updatedAt: now,
     };
-    this.catalogItems.unshift(newItem);
+    const existingIndex = this.catalogItems.findIndex((i) => i.id === itemId);
+    if (existingIndex >= 0) {
+      this.catalogItems[existingIndex] = newItem;
+    } else {
+      this.catalogItems.unshift(newItem);
+    }
     return newItem;
   }
 

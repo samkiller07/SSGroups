@@ -20,7 +20,8 @@ import {
   saveDailyStatusAction,
   deleteDailyStatusAction,
   toggleDailyStatusActiveAction,
-  adminLogoutAction
+  adminLogoutAction,
+  getAdminCatalogAction
 } from '@/app/actions/admin-actions';
 import { DEFAULT_BRAND_LOGOS } from '@/config/brand-logos';
 import { isSupabaseConfigured } from '@/lib/supabase';
@@ -199,11 +200,34 @@ export default function AdminDashboardPage() {
   const [brandDeliveryNote, setBrandDeliveryNote] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const activeBrand = dataRepository.getBrand(activeBrandId) || BRANDS.aquarium;
-  const categories = dataRepository.getAllCategoriesForAdmin(activeBrandId);
-  const allItems = dataRepository.getAllCatalogItemsForAdmin(activeBrandId);
-  const allDailyStatuses = dataRepository.getAllDailyStatusesForAdmin(activeBrandId);
-  const activeDailyStatuses = dataRepository.getActiveDailyStatusesForBrand(activeBrandId);
+  const [activeBrand, setActiveBrand] = useState<BrandConfig>(() => dataRepository.getBrand(activeBrandId) || BRANDS.aquarium);
+  const [categories, setCategories] = useState<Category[]>(() => dataRepository.getAllCategoriesForAdmin(activeBrandId));
+  const [allItems, setAllItems] = useState<CatalogItem[]>(() => dataRepository.getAllCatalogItemsForAdmin(activeBrandId));
+  const [allDailyStatuses, setAllDailyStatuses] = useState<DailyStatus[]>(() => dataRepository.getAllDailyStatusesForAdmin(activeBrandId));
+  const [isCatalogLoading, setIsCatalogLoading] = useState(false);
+
+  const activeDailyStatuses = allDailyStatuses.filter((s) => s.isActive);
+
+  const loadCatalogData = async (brandId: string) => {
+    setIsCatalogLoading(true);
+    try {
+      const res = await getAdminCatalogAction(brandId);
+      if (res && res.success) {
+        if (res.items) setAllItems(res.items);
+        if (res.categories) setCategories(res.categories);
+        if (res.statuses) setAllDailyStatuses(res.statuses as any);
+        if (res.brand) setActiveBrand(res.brand as any);
+      }
+    } catch (err) {
+      console.error('[AdminDashboard] Failed to load catalog from Supabase:', err);
+    } finally {
+      setIsCatalogLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCatalogData(activeBrandId);
+  }, [activeBrandId, dataVersion]);
 
   // Inventory-specific calculations
   const productItems = allItems.filter((i) => i.itemType === 'PRODUCT');
@@ -405,6 +429,7 @@ export default function AdminDashboardPage() {
       if (result.success) {
         setIsItemModalOpen(false);
         setDataVersion((v) => v + 1);
+        await loadCatalogData(activeBrandId);
         showToast(editingItem ? `Updated "${formName}" successfully!` : `Created "${formName}" successfully!`, 'success');
       } else {
         setFormError(result.error || 'Failed to save item');
@@ -421,10 +446,17 @@ export default function AdminDashboardPage() {
   // Delete Item Action
   const handleDeleteItem = async (id: string, name: string) => {
     if (confirm(`Are you sure you want to permanently delete "${name}" from ${activeBrand.name}?`)) {
-      const res = await deleteCatalogItemAction(id, activeBrandId);
-      if (res.success) {
-        setDataVersion((v) => v + 1);
-        showToast(`Deleted "${name}"`, 'info');
+      try {
+        const res = await deleteCatalogItemAction(id, activeBrandId);
+        if (res.success) {
+          setDataVersion((v) => v + 1);
+          await loadCatalogData(activeBrandId);
+          showToast(`Deleted "${name}"`, 'info');
+        } else {
+          showToast(res.error || 'Failed to delete item from database', 'error');
+        }
+      } catch (err: any) {
+        showToast(err.message || 'Error deleting item', 'error');
       }
     }
   };
@@ -436,9 +468,10 @@ export default function AdminDashboardPage() {
       const result = await updateItemStockAction(itemId, activeBrandId, newStock, isAvailable);
       if (result.success && result.item) {
         setDataVersion((v) => v + 1);
+        await loadCatalogData(activeBrandId);
         showToast(`Stock updated: ${result.item.name} (${formatStockDisplay(result.item.stockQuantity, result.item.unitType, result.item.unitValue)})`, 'success');
       } else {
-        showToast(result.error || 'Failed to update stock', 'error');
+        showToast(result.error || 'Failed to update stock in database', 'error');
       }
     } catch (err: any) {
       showToast(err.message || 'Stock update failed', 'error');
@@ -497,12 +530,15 @@ export default function AdminDashboardPage() {
       if (result.success) {
         setIsCategoryModalOpen(false);
         setDataVersion((v) => v + 1);
+        await loadCatalogData(activeBrandId);
         showToast(`Category "${catName}" saved!`, 'success');
       } else {
         setFormError(result.error || 'Failed to save category');
+        showToast(result.error || 'Failed to save category', 'error');
       }
     } catch (err: any) {
       setFormError(err.message || 'Error occurred while saving category');
+      showToast('Error saving category', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -510,10 +546,17 @@ export default function AdminDashboardPage() {
 
   const handleDeleteCategory = async (id: string, name: string) => {
     if (confirm(`Delete category "${name}"? Items linked to this category will need re-assignment.`)) {
-      const res = await deleteCategoryAction(id, activeBrandId);
-      if (res.success) {
-        setDataVersion((v) => v + 1);
-        showToast(`Deleted category "${name}"`, 'info');
+      try {
+        const res = await deleteCategoryAction(id, activeBrandId);
+        if (res.success) {
+          setDataVersion((v) => v + 1);
+          await loadCatalogData(activeBrandId);
+          showToast(`Deleted category "${name}"`, 'info');
+        } else {
+          showToast(res.error || 'Failed to delete category', 'error');
+        }
+      } catch (err: any) {
+        showToast(err.message || 'Error deleting category', 'error');
       }
     }
   };

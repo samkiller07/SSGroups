@@ -8,6 +8,8 @@ import { ProductCard } from '@/components/ProductCard';
 import { formatPrice, calculateDiscount } from '@/lib/utils';
 import { formatPriceWithUnit, formatStockDisplay } from '@/lib/units';
 import { generateServiceInquiryWhatsAppUrl, generateGeneralInquiryWhatsAppUrl } from '@/lib/whatsapp';
+import { getSupabaseServer, isSupabaseConfigured } from '@/lib/supabase';
+import { mapDbCatalogItemToItem } from '@/lib/supabase-mappers';
 import { 
   ChevronRight, 
   Sparkles, 
@@ -25,7 +27,23 @@ interface ProductDetailPageProps {
 export async function generateMetadata({ params }: ProductDetailPageProps): Promise<Metadata> {
   const { brand: brandId, slug } = await params;
   const brand = dataRepository.getBrand(brandId);
-  const item = dataRepository.getItemBySlug(brandId, slug);
+  let item = dataRepository.getItemBySlug(brandId, slug);
+
+  if (!item && isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      const { data: dbItem } = await supabase
+        .from('catalog_items')
+        .select('*, images:product_images(*)')
+        .eq('brand_id', brandId)
+        .eq('slug', slug)
+        .single();
+      if (dbItem) {
+        item = mapDbCatalogItemToItem(dbItem);
+        dataRepository.addCatalogItem(item);
+      }
+    }
+  }
 
   if (!brand || !item) return {};
 
@@ -43,7 +61,23 @@ export async function generateMetadata({ params }: ProductDetailPageProps): Prom
 export default async function ProductDetailPage({ params }: ProductDetailPageProps) {
   const { brand: brandId, slug } = await params;
   const brand = dataRepository.getBrand(brandId);
-  const item = dataRepository.getItemBySlug(brandId, slug);
+  let item = dataRepository.getItemBySlug(brandId, slug);
+
+  if (!item && isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      const { data: dbItem } = await supabase
+        .from('catalog_items')
+        .select('*, images:product_images(*)')
+        .eq('brand_id', brandId)
+        .eq('slug', slug)
+        .single();
+      if (dbItem) {
+        item = mapDbCatalogItemToItem(dbItem);
+        dataRepository.addCatalogItem(item);
+      }
+    }
+  }
 
   if (!brand || !item) {
     notFound();
