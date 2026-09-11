@@ -7,7 +7,7 @@ import { BrandConfig, DeliveryMethod } from '@/types';
 import { useCartStore } from '@/lib/cart-store';
 import { formatPrice } from '@/lib/utils';
 import { formatPriceWithUnit } from '@/lib/units';
-import { verifyAndGenerateWhatsAppOrder } from '@/app/actions/admin-actions';
+import { createCustomerOrderAction } from '@/app/actions/admin-actions';
 import { 
   X, 
   Trash2, 
@@ -21,7 +21,12 @@ import {
   ArrowRight,
   ShieldCheck,
   AlertCircle,
-  Loader2
+  CheckCircle2,
+  Loader2,
+  User,
+  Phone,
+  Mail,
+  FileText
 } from 'lucide-react';
 
 interface BrandCartDrawerProps {
@@ -31,10 +36,14 @@ interface BrandCartDrawerProps {
 }
 
 export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen, onClose }) => {
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>('PICKUP');
   const [customerNote, setCustomerNote] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [completedInvoice, setCompletedInvoice] = useState<string | null>(null);
 
   const items = useCartStore((state) => state.getItems(brand.id));
   const updateQuantity = useCartStore((state) => state.updateQuantity);
@@ -50,34 +59,58 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
 
   const handleWhatsAppCheckout = async () => {
     if (items.length === 0) return;
+
+    if (!customerName.trim()) {
+      setErrorMessage('Please enter your full name.');
+      return;
+    }
+    if (!customerPhone.trim() || customerPhone.replace(/\D/g, '').length < 10) {
+      setErrorMessage('Please enter a valid 10-digit contact number.');
+      return;
+    }
+    if (!customerEmail.trim() || !customerEmail.includes('@')) {
+      setErrorMessage('Please enter a valid email address for invoice & confirmation.');
+      return;
+    }
+
     setIsVerifying(true);
     setErrorMessage('');
 
     try {
       const payload = items.map((ci) => ({
-        itemId: ci.item.id,
+        catalogItemId: ci.item.id,
         quantity: ci.quantity,
       }));
 
-      // Server-side authoritative verification
-      const result = await verifyAndGenerateWhatsAppOrder(
-        brand.id,
-        payload,
+      // Server-side authoritative order creation (PENDING status, Stock UNCHANGED)
+      const result = await createCustomerOrderAction({
+        brandId: brand.id,
+        customerName: customerName.trim(),
+        customerPhone: customerPhone.trim(),
+        customerEmail: customerEmail.trim(),
         deliveryMethod,
-        customerNote
-      );
+        customerNote: customerNote.trim() || undefined,
+        items: payload,
+      });
 
-      if (result.success && result.whatsAppUrl) {
-        window.open(result.whatsAppUrl, '_blank');
+      if (result.success && result.invoiceNumber) {
+        setCompletedInvoice(result.invoiceNumber);
+        clearCart(brand.id);
+
+        if (result.whatsAppUrl) {
+          window.open(result.whatsAppUrl, '_blank');
+        }
       } else {
-        setErrorMessage(result.error || 'Failed to verify order prices');
+        setErrorMessage(result.error || 'Failed to create order. Please try again.');
       }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Error communicating with server');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error communicating with server';
+      setErrorMessage(msg);
     } finally {
       setIsVerifying(false);
     }
   };
+
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -222,8 +255,53 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
                   })}
                 </div>
 
+                {/* Customer Contact Details Required for Order & Invoice */}
+                <div className="pt-4 border-t border-slate-200 dark:border-slate-850 space-y-2.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 block">
+                    Customer Information <span className="text-red-500">*</span>
+                  </label>
+                  
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <User className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="text"
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        placeholder="Full Name *"
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                        required
+                      />
+                    </div>
+
+                    <div className="relative">
+                      <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="tel"
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        placeholder="Contact Number (WhatsApp) *"
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                        required
+                      />
+                    </div>
+
+                    <div className="relative">
+                      <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="email"
+                        value={customerEmail}
+                        onChange={(e) => setCustomerEmail(e.target.value)}
+                        placeholder="Email Address (for Invoice & Updates) *"
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/* Fulfillment Selection */}
-                <div className="pt-4 border-t border-slate-200 dark:border-slate-850 space-y-2">
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-850 space-y-2">
                   <label className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block">
                     Fulfillment Preference
                   </label>
@@ -268,16 +346,49 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
                     type="text"
                     value={customerNote}
                     onChange={(e) => setCustomerNote(e.target.value)}
-                    placeholder="Optional note / special instructions..."
+                    placeholder="Optional delivery instructions or notes..."
                     className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
                   />
                 </div>
               </div>
             )}
+
+            {/* Completed Invoice Banner */}
+            {completedInvoice && (
+              <div className="m-5 p-5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-center space-y-3">
+                <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-emerald-600 dark:text-emerald-400">
+                    Order Submitted!
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+                    Your order is currently <strong className="text-amber-500">PENDING</strong> verification.
+                  </p>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-emerald-500/20">
+                  <div className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Invoice Number</div>
+                  <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">{completedInvoice}</div>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  WhatsApp chat was opened to transmit your request. An admin will verify stock readiness and confirm your order shortly.
+                </p>
+                <button
+                  onClick={() => {
+                    setCompletedInvoice(null);
+                    onClose();
+                  }}
+                  className="w-full py-2.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Footer with Price Summary & WhatsApp Checkout */}
-          {items.length > 0 && (
+          {items.length > 0 && !completedInvoice && (
             <div className="p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 space-y-3">
               <div className="space-y-1.5 text-xs">
                 <div className="flex justify-between text-slate-600 dark:text-slate-400">
@@ -298,24 +409,32 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
                 </div>
               </div>
 
+              {errorMessage && (
+                <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
               <button
                 onClick={handleWhatsAppCheckout}
                 disabled={isVerifying}
-                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/30 transition-all active:scale-98 disabled:opacity-50"
+                className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/30 transition-all active:scale-98 disabled:opacity-50"
                 id="drawer-whatsapp-checkout"
               >
                 {isVerifying ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Verifying Authoritative Prices...</span>
+                    <span>Creating Order & Invoice...</span>
                   </>
                 ) : (
                   <>
                     <MessageCircle className="w-4 h-4 fill-white text-white" />
-                    <span>Order via WhatsApp ({brand.whatsappNumber})</span>
+                    <span>Create Order & Send via WhatsApp</span>
                   </>
                 )}
               </button>
+
 
               <div className="flex items-center justify-between text-[11px] pt-1">
                 <Link

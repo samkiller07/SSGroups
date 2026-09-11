@@ -168,3 +168,53 @@ export interface AuthSession {
   exp: number;
 }
 
+export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'CANCELLED';
+
+export interface OrderItem {
+  id: string;
+  orderId: string;
+  catalogItemId: string;
+  productName: string;
+  quantity: number;
+  unitType: UnitType | string;
+  unitValue: number;
+  unitPrice: number;
+  lineTotal: number;
+  createdAt?: string;
+}
+
+export interface Order {
+  id: string;
+  invoiceNumber: string;
+  brandId: BrandId;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  deliveryMethod: DeliveryMethod | string;
+  customerNote?: string;
+  subtotal: number;
+  savings: number;
+  totalAmount: number;
+  status: OrderStatus;
+  confirmationEmailSentAt?: string | null;
+  confirmationEmailError?: string | null;
+  createdAt: string;
+  confirmedAt?: string | null;
+  cancelledAt?: string | null;
+  items?: OrderItem[];
+}
+
+export interface CustomerCheckoutInput {
+  brandId: BrandId;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  deliveryMethod: DeliveryMethod;
+  customerNote?: string;
+  items: {
+    catalogItemId: string;
+    quantity: number;
+  }[];
+}
+
+

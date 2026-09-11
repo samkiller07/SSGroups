@@ -8,8 +8,8 @@ const SECRET_KEY = new TextEncoder().encode(
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Protect admin dashboard routes
-  if (pathname.startsWith('/admin/dashboard')) {
+  // Protect admin dashboard and orders routes
+  if (pathname.startsWith('/admin/dashboard') || pathname.startsWith('/admin/orders')) {
     const token = request.cookies.get('ss_admin_session')?.value;
 
     if (!token) {
@@ -34,5 +34,6 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/admin/dashboard/:path*'],
+  matcher: ['/admin/dashboard/:path*', '/admin/orders/:path*', '/admin/orders'],
 };
+

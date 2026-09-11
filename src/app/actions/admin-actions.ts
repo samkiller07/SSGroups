@@ -3,13 +3,15 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createAdminSession, clearAdminSession, requireAdminAuth, verifyAdminSession } from '@/lib/auth';
-import { catalogItemSchema, categorySchema, brandSettingsSchema, adminLoginSchema, dailyStatusSchema } from '@/lib/validation';
+import { catalogItemSchema, categorySchema, brandSettingsSchema, adminLoginSchema, dailyStatusSchema, customerCheckoutSchema } from '@/lib/validation';
 import { dataRepository } from '@/lib/data-store';
 import { getSupabaseServer, isSupabaseConfigured } from '@/lib/supabase';
-import { CatalogItem, Category, BrandConfig, CartItem, UnitType, DailyStatus } from '@/types';
+import { CatalogItem, Category, BrandConfig, CartItem, UnitType, DailyStatus, Order, OrderStatus, CustomerCheckoutInput } from '@/types';
 import { formatPrice } from '@/lib/utils';
 import { formatPriceWithUnit } from '@/lib/units';
-import { generateCartWhatsAppUrl } from '@/lib/whatsapp';
+import { generateCartWhatsAppUrl, generateOrderWhatsAppUrl } from '@/lib/whatsapp';
+import { sendOrderConfirmationEmail } from '@/lib/email';
+
 
 export async function adminLoginAction(formData: FormData) {
   const email = (formData.get('email') as string) || '';
@@ -415,3 +417,269 @@ export async function verifyAndGenerateWhatsAppOrder(
     itemCount: verifiedCartItems.reduce((s, i) => s + i.quantity, 0),
   };
 }
+
+// =========================================================================
+// ORDER MANAGEMENT SERVER ACTIONS (V2 PRODUCTION WORKFLOW)
+// =========================================================================
+
+/**
+ * Customer Checkout Action:
+ * 1. Validates customer info & cart items with Zod
+ * 2. Recalculates authoritative server-side pricing
+ * 3. Generates unique, sequential invoice number
+ * 4. Creates PENDING order with items (STOCK REMAINS UNTOUCHED)
+ * 5. Generates WhatsApp deep-link with invoice number & order breakdown
+ */
+export async function createCustomerOrderAction(rawInput: unknown) {
+  const parseResult = customerCheckoutSchema.safeParse(rawInput);
+  if (!parseResult.success) {
+    return {
+      success: false,
+      error: parseResult.error.issues[0]?.message || 'Invalid order information provided.',
+    };
+  }
+
+  const validData = parseResult.data as CustomerCheckoutInput;
+  const brand = dataRepository.getBrand(validData.brandId);
+  if (!brand) {
+    return { success: false, error: 'Invalid brand selected.' };
+  }
+
+  // Create PENDING order via authoritative repository (Stock is NOT reduced)
+  const result = dataRepository.createOrder(validData);
+  if (!result.success || !result.order) {
+    return {
+      success: false,
+      error: result.error || 'Failed to create order.',
+    };
+  }
+
+  const order = result.order;
+
+  // Supabase sync if configured
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      try {
+        await supabase.from('orders').insert({
+          id: order.id,
+          invoice_number: order.invoiceNumber,
+          brand_id: order.brandId,
+          customer_name: order.customerName,
+          customer_phone: order.customerPhone,
+          customer_email: order.customerEmail,
+          delivery_method: order.deliveryMethod,
+          customer_note: order.customerNote || null,
+          subtotal: order.subtotal,
+          savings: order.savings,
+          total_amount: order.totalAmount,
+          status: 'PENDING',
+          created_at: order.createdAt,
+        });
+
+        if (order.items && order.items.length > 0) {
+          const itemsPayload = order.items.map((oi) => ({
+            id: oi.id,
+            order_id: order.id,
+            catalog_item_id: oi.catalogItemId,
+            product_name: oi.productName,
+            quantity: oi.quantity,
+            unit_type: oi.unitType,
+            unit_value: oi.unitValue,
+            unit_price: oi.unitPrice,
+            line_total: oi.lineTotal,
+            created_at: oi.createdAt,
+          }));
+          await supabase.from('order_items').insert(itemsPayload);
+        }
+      } catch (dbErr) {
+        console.warn('[Supabase Orders Sync] In-memory active, PostgreSQL sync warning:', dbErr);
+      }
+    }
+  }
+
+  // Generate WhatsApp message with invoice number and customer details
+  const whatsAppUrl = generateOrderWhatsAppUrl(brand, order);
+
+  return {
+    success: true,
+    orderId: order.id,
+    invoiceNumber: order.invoiceNumber,
+    whatsAppUrl,
+    subtotal: order.subtotal,
+    savings: order.savings,
+    totalAmount: order.totalAmount,
+  };
+}
+
+/**
+ * Admin Confirm Order Action:
+ * 1. Requires Admin Authentication
+ * 2. Atomically validates stock for ALL items (fails if any item lacks stock)
+ * 3. Atomically deducts stock and sets status = 'CONFIRMED'
+ * 4. Dispatches branded HTML confirmation email via SMTP
+ * 5. CRITICAL: Email failure does NOT rollback the confirmation or stock deduction
+ */
+export async function confirmAdminOrderAction(orderId: string) {
+  await requireAdminAuth();
+
+  if (!orderId || typeof orderId !== 'string') {
+    return { success: false, error: 'Valid order ID required.' };
+  }
+
+  // 1. Atomic stock confirmation pre-check & deduction
+  const confirmResult = dataRepository.confirmOrderAndDeductStock(orderId);
+  if (!confirmResult.success || !confirmResult.order) {
+    return {
+      success: false,
+      error: confirmResult.error || 'Failed to confirm order.',
+    };
+  }
+
+  const confirmedOrder = confirmResult.order;
+
+  // Mirror update to Supabase if configured
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      try {
+        await supabase
+          .from('orders')
+          .update({
+            status: 'CONFIRMED',
+            confirmed_at: confirmedOrder.confirmedAt,
+          })
+          .eq('id', orderId);
+
+        // Update stocks in Supabase
+        for (const item of confirmedOrder.items || []) {
+          const catalogItem = dataRepository.getItemById(item.catalogItemId);
+          if (catalogItem && catalogItem.stockQuantity !== null) {
+            await supabase
+              .from('catalog_items')
+              .update({ stock_quantity: catalogItem.stockQuantity })
+              .eq('id', item.catalogItemId);
+          }
+        }
+      } catch (dbErr) {
+        console.warn('[Supabase Sync Warning]', dbErr);
+      }
+    }
+  }
+
+  // 2. Send branded confirmation email
+  let emailSent = false;
+  let emailError: string | null = null;
+
+  try {
+    const emailRes = await sendOrderConfirmationEmail(confirmedOrder);
+    if (emailRes.success) {
+      emailSent = true;
+      dataRepository.updateOrderEmailStatus(orderId, {
+        sentAt: new Date().toISOString(),
+        error: null,
+      });
+    } else {
+      emailError = emailRes.error || 'Failed to dispatch email';
+      dataRepository.updateOrderEmailStatus(orderId, {
+        error: emailError,
+      });
+    }
+  } catch (err: unknown) {
+    emailError = err instanceof Error ? err.message : String(err);
+    dataRepository.updateOrderEmailStatus(orderId, {
+      error: emailError,
+    });
+  }
+
+  // Revalidate admin views
+  revalidatePath('/admin/orders');
+  revalidatePath('/admin/dashboard');
+  revalidatePath('/admin/inventory');
+  revalidatePath(`/${confirmedOrder.brandId}`);
+
+  return {
+    success: true,
+    order: confirmedOrder,
+    emailSent,
+    emailError,
+    message: emailSent
+      ? `Order ${confirmedOrder.invoiceNumber} confirmed. Stock deducted and confirmation email sent to ${confirmedOrder.customerEmail}.`
+      : `Order ${confirmedOrder.invoiceNumber} confirmed and stock deducted. Note: Email notice failed (${emailError || 'SMTP unverified'}).`,
+  };
+}
+
+/**
+ * Admin Cancel Order Action:
+ * 1. Requires Admin Authentication
+ * 2. Transitions PENDING -> CANCELLED
+ * 3. Stock is UNTOUCHED
+ */
+export async function cancelAdminOrderAction(orderId: string) {
+  await requireAdminAuth();
+
+  if (!orderId || typeof orderId !== 'string') {
+    return { success: false, error: 'Valid order ID required.' };
+  }
+
+  const cancelResult = dataRepository.cancelOrder(orderId);
+  if (!cancelResult.success || !cancelResult.order) {
+    return {
+      success: false,
+      error: cancelResult.error || 'Failed to cancel order.',
+    };
+  }
+
+  const cancelledOrder = cancelResult.order;
+
+  // Supabase sync if configured
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      try {
+        await supabase
+          .from('orders')
+          .update({
+            status: 'CANCELLED',
+            cancelled_at: cancelledOrder.cancelledAt,
+          })
+          .eq('id', orderId);
+      } catch (dbErr) {
+        console.warn('[Supabase Sync Warning]', dbErr);
+      }
+    }
+  }
+
+  revalidatePath('/admin/orders');
+  revalidatePath('/admin/dashboard');
+
+  return {
+    success: true,
+    order: cancelledOrder,
+    message: `Order ${cancelledOrder.invoiceNumber} has been safely cancelled. Stock remained untouched.`,
+  };
+}
+
+/**
+ * Admin Fetch Orders Action:
+ * 1. Requires Admin Authentication
+ * 2. Supports Brand, Status, and Search filtering
+ * 3. Returns Order KPIs (total, pending, confirmed, cancelled, confirmed revenue)
+ */
+export async function getAdminOrdersAction(options?: {
+  brandId?: string;
+  status?: OrderStatus;
+  search?: string;
+}) {
+  await requireAdminAuth();
+
+  const orders = dataRepository.getOrders(options);
+  const kpis = dataRepository.getOrderKPIs();
+
+  return {
+    success: true,
+    orders,
+    kpis,
+  };
+}
+

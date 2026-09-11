@@ -29,9 +29,11 @@ import {
   LogOut, 
   Layers, 
   ShoppingBag, 
+  FileText,
   Wrench, 
   Tag, 
   Sparkles, 
+
   Plus, 
   Minus,
   Trash2, 
@@ -916,12 +918,28 @@ export default function AdminDashboardPage() {
                 Operations Menu
               </label>
 
+              {/* NAV: Orders & Confirmations */}
+              <Link
+                href="/admin/orders"
+                className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white hover:bg-slate-900 transition-all group"
+                id="sidebar-nav-orders"
+              >
+                <div className="flex items-center gap-2.5">
+                  <FileText className="w-4 h-4 text-cyan-400" />
+                  <span className="text-slate-200 group-hover:text-white">Orders & Confirmations</span>
+                </div>
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/80 uppercase">
+                  NEW
+                </span>
+              </Link>
+
               {/* TAB 1: Products */}
               <button
                 onClick={() => {
                   setActiveTab('ITEMS');
                   setIsMobileSidebarOpen(false);
                 }}
+
                 className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
                   activeTab === 'ITEMS'
                     ? 'bg-cyan-950 text-cyan-300 border border-cyan-700 shadow-sm'

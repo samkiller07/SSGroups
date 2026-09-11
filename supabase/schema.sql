@@ -148,3 +148,208 @@ CREATE POLICY "Admin catalog items write" ON public.catalog_items FOR ALL TO aut
 CREATE POLICY "Admin product images write" ON public.product_images FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Admin daily statuses write" ON public.daily_statuses FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
+-- =========================================================================
+-- 7. ORDERS & ORDER ITEMS TABLES (V2 PRODUCTION WORKFLOW)
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS public.orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    invoice_number TEXT UNIQUE NOT NULL,
+    brand_id TEXT NOT NULL REFERENCES public.brands(id) ON DELETE RESTRICT,
+    customer_name TEXT NOT NULL,
+    customer_phone TEXT NOT NULL,
+    customer_email TEXT NOT NULL,
+    delivery_method TEXT NOT NULL,
+    customer_note TEXT,
+    subtotal NUMERIC(10, 2) NOT NULL,
+    savings NUMERIC(10, 2) DEFAULT 0,
+    total_amount NUMERIC(10, 2) NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
+    confirmation_email_sent_at TIMESTAMPTZ,
+    confirmation_email_error TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    confirmed_at TIMESTAMPTZ,
+    cancelled_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_brand_status ON public.orders(brand_id, status);
+CREATE INDEX IF NOT EXISTS idx_orders_created_at ON public.orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_invoice ON public.orders(invoice_number);
+
+CREATE TABLE IF NOT EXISTS public.order_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    catalog_item_id UUID NOT NULL REFERENCES public.catalog_items(id) ON DELETE RESTRICT,
+    product_name TEXT NOT NULL,
+    quantity INT NOT NULL CHECK (quantity > 0),
+    unit_type TEXT NOT NULL DEFAULT 'piece',
+    unit_value NUMERIC(10, 2) NOT NULL DEFAULT 1,
+    unit_price NUMERIC(10, 2) NOT NULL,
+    line_total NUMERIC(10, 2) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items(order_id);
+
+-- 8. INVOICE SEQUENCES TABLE
+CREATE TABLE IF NOT EXISTS public.invoice_sequences (
+    brand_id TEXT NOT NULL,
+    year INT NOT NULL,
+    last_seq INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (brand_id, year)
+);
+
+-- ATOMIC INVOICE NUMBER GENERATION FUNCTION
+CREATE OR REPLACE FUNCTION public.generate_invoice_number(p_brand_id TEXT)
+RETURNS TEXT AS $$
+DECLARE
+    v_prefix TEXT;
+    v_year INT := EXTRACT(YEAR FROM CURRENT_DATE)::INT;
+    v_seq INT;
+    v_invoice TEXT;
+BEGIN
+    IF p_brand_id = 'aquarium' THEN
+        v_prefix := 'SSA';
+    ELSIF p_brand_id = 'kirubai' THEN
+        v_prefix := 'KCK';
+    ELSIF p_brand_id = 'vision-360' THEN
+        v_prefix := 'SSV';
+    ELSE
+        v_prefix := 'SSG';
+    END IF;
+
+    INSERT INTO public.invoice_sequences (brand_id, year, last_seq)
+    VALUES (p_brand_id, v_year, 1)
+    ON CONFLICT (brand_id, year)
+    DO UPDATE SET last_seq = public.invoice_sequences.last_seq + 1
+    RETURNING last_seq INTO v_seq;
+
+    v_invoice := v_prefix || '-' || v_year::TEXT || '-' || LPAD(v_seq::TEXT, 6, '0');
+    RETURN v_invoice;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 9. ATOMIC STOCK CONFIRMATION FUNCTION
+CREATE OR REPLACE FUNCTION public.confirm_order_and_deduct_stock(p_order_id UUID)
+RETURNS JSONB AS $$
+DECLARE
+    v_order RECORD;
+    v_item RECORD;
+    v_current_stock INT;
+    v_item_name TEXT;
+BEGIN
+    -- 1. Lock the order row and verify it's PENDING
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Order not found');
+    END IF;
+
+    IF v_order.status = 'CONFIRMED' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Order has already been confirmed.');
+    END IF;
+
+    IF v_order.status = 'CANCELLED' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Cancelled orders cannot be confirmed.');
+    END IF;
+
+    -- 2. Lock each catalog item and verify stock for ALL items
+    FOR v_item IN
+        SELECT oi.catalog_item_id, oi.quantity, oi.product_name, ci.stock_quantity
+        FROM public.order_items oi
+        JOIN public.catalog_items ci ON ci.id = oi.catalog_item_id
+        WHERE oi.order_id = p_order_id
+        FOR UPDATE OF ci
+    LOOP
+        IF v_item.stock_quantity IS NOT NULL THEN
+            IF v_item.stock_quantity < v_item.quantity THEN
+                -- Insufficient stock: abort transaction immediately
+                RETURN jsonb_build_object(
+                    'success', false,
+                    'error', 'Insufficient stock for ' || v_item.product_name || '. Required: ' || v_item.quantity || ', Available: ' || v_item.stock_quantity
+                );
+            END IF;
+        END IF;
+    END LOOP;
+
+    -- 3. All items have sufficient stock -> deduct stock
+    FOR v_item IN
+        SELECT catalog_item_id, quantity
+        FROM public.order_items
+        WHERE order_id = p_order_id
+    LOOP
+        UPDATE public.catalog_items
+        SET stock_quantity = stock_quantity - v_item.quantity,
+            updated_at = NOW()
+        WHERE id = v_item.catalog_item_id AND stock_quantity IS NOT NULL;
+    END LOOP;
+
+    -- 4. Mark order CONFIRMED
+    UPDATE public.orders
+    SET status = 'CONFIRMED',
+        confirmed_at = NOW()
+    WHERE id = p_order_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', p_order_id,
+        'invoice_number', v_order.invoice_number,
+        'message', 'Order confirmed and stock deducted successfully.'
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- 10. CANCEL ORDER FUNCTION
+CREATE OR REPLACE FUNCTION public.cancel_order_safe(p_order_id UUID)
+RETURNS JSONB AS $$
+DECLARE
+    v_order RECORD;
+BEGIN
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Order not found');
+    END IF;
+
+    IF v_order.status = 'CANCELLED' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Order is already cancelled.');
+    END IF;
+
+    IF v_order.status = 'CONFIRMED' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Confirmed orders cannot be cancelled directly.');
+    END IF;
+
+    UPDATE public.orders
+    SET status = 'CANCELLED',
+        cancelled_at = NOW()
+    WHERE id = p_order_id;
+
+    RETURN jsonb_build_object('success', true, 'order_id', p_order_id, 'message', 'Order cancelled safely.');
+END;
+$$ LANGUAGE plpgsql;
+
+-- RLS FOR ORDERS & ORDER ITEMS
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+
+-- Anonymous insert with strict constraint (status must be PENDING, confirmed_at is null)
+CREATE POLICY "Public create pending order" ON public.orders
+    FOR INSERT TO anon, authenticated
+    WITH CHECK (status = 'PENDING' AND confirmed_at IS NULL AND cancelled_at IS NULL);
+
+CREATE POLICY "Public create order items" ON public.order_items
+    FOR INSERT TO anon, authenticated
+    WITH CHECK (true);
+
+-- Admin read & write access
+CREATE POLICY "Admin orders view" ON public.orders FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Admin orders update" ON public.orders FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "Admin order items view" ON public.order_items FOR SELECT TO authenticated USING (true);
+
+

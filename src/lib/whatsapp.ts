@@ -50,6 +50,46 @@ export function generateCartWhatsAppUrl(
   return `https://wa.me/${targetPhone}?text=${encodeURIComponent(message)}`;
 }
 
+export function generateOrderWhatsAppUrl(brand: BrandConfig, order: import('@/types').Order): string {
+
+  const cleanPhone = brand.whatsappNumber.replace(/\D/g, '');
+  const targetPhone = cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`;
+
+  let message = `*Order Request — ${order.invoiceNumber}*\n`;
+  message += `*Brand:* ${brand.name}\n`;
+  message += `--------------------------------\n`;
+  message += `*Customer:* ${order.customerName}\n`;
+  message += `*Phone:* ${order.customerPhone}\n`;
+  message += `*Email:* ${order.customerEmail}\n`;
+  message += `*Invoice No:* ${order.invoiceNumber}\n`;
+  message += `*Delivery:* ${order.deliveryMethod === 'HOME_DELIVERY' ? 'Doorstep Delivery' : 'Shop Pickup'}\n`;
+
+  if (order.customerNote) {
+    message += `*Note:* ${order.customerNote}\n`;
+  }
+
+  message += `--------------------------------\n`;
+  message += `*Order Items:*\n`;
+
+  (order.items || []).forEach((item, idx) => {
+    message += `${idx + 1}. *${item.productName}*\n`;
+    message += `   Qty: ${item.quantity} × ₹${Number(item.unitPrice).toLocaleString('en-IN')} = *₹${Number(item.lineTotal).toLocaleString('en-IN')}*\n`;
+  });
+
+  message += `--------------------------------\n`;
+  message += `*Subtotal:* ₹${Number(order.subtotal).toLocaleString('en-IN')}\n`;
+  if (order.savings > 0) {
+    message += `*Savings:* ₹${Number(order.savings).toLocaleString('en-IN')}\n`;
+  }
+  message += `*Total Amount:* ₹${Number(order.totalAmount).toLocaleString('en-IN')}\n`;
+  message += `*Status:* PENDING VERIFICATION\n`;
+  message += `--------------------------------\n`;
+  message += `Please confirm order availability and dispatch schedule. Thank you!`;
+
+  return `https://wa.me/${targetPhone}?text=${encodeURIComponent(message)}`;
+}
+
+
 export function generateServiceInquiryWhatsAppUrl(
   brand: BrandConfig,
   service: CatalogItem,

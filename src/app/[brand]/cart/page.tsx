@@ -9,7 +9,7 @@ import { useCartStore } from '@/lib/cart-store';
 import { DeliveryMethod } from '@/types';
 import { formatPrice } from '@/lib/utils';
 import { formatPriceWithUnit } from '@/lib/units';
-import { verifyAndGenerateWhatsAppOrder } from '@/app/actions/admin-actions';
+import { createCustomerOrderAction } from '@/app/actions/admin-actions';
 import { 
   ShoppingBag, 
   Trash2, 
@@ -22,7 +22,10 @@ import {
   ArrowLeft, 
   CheckCircle2, 
   AlertCircle,
-  Loader2
+  Loader2,
+  User,
+  Phone,
+  Mail
 } from 'lucide-react';
 
 export default function BrandCartPage() {
@@ -30,10 +33,14 @@ export default function BrandCartPage() {
   const brandId = params.brand as string;
   const brand = dataRepository.getBrand(brandId);
 
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>('PICKUP');
   const [customerNote, setCustomerNote] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [completedInvoice, setCompletedInvoice] = useState<string | null>(null);
 
   const items = useCartStore((state) => state.getItems(brandId));
   const updateQuantity = useCartStore((state) => state.updateQuantity);
@@ -49,34 +56,58 @@ export default function BrandCartPage() {
 
   const handleCheckout = async () => {
     if (items.length === 0) return;
+
+    if (!customerName.trim()) {
+      setErrorMessage('Please provide your full name before placing the order.');
+      return;
+    }
+    if (!customerPhone.trim() || customerPhone.replace(/\D/g, '').length < 10) {
+      setErrorMessage('Please provide a valid 10-digit phone number.');
+      return;
+    }
+    if (!customerEmail.trim() || !customerEmail.includes('@')) {
+      setErrorMessage('Please provide a valid email address for invoice and confirmation.');
+      return;
+    }
+
     setIsVerifying(true);
     setErrorMessage('');
 
     try {
       const payload = items.map((ci) => ({
-        itemId: ci.item.id,
+        catalogItemId: ci.item.id,
         quantity: ci.quantity,
       }));
 
-      // Server-side authoritative verification
-      const result = await verifyAndGenerateWhatsAppOrder(
+      // Server-side authoritative PENDING order creation (stock untouched)
+      const result = await createCustomerOrderAction({
         brandId,
-        payload,
+        customerName: customerName.trim(),
+        customerPhone: customerPhone.trim(),
+        customerEmail: customerEmail.trim(),
         deliveryMethod,
-        customerNote
-      );
+        customerNote: customerNote.trim() || undefined,
+        items: payload,
+      });
 
-      if (result.success && result.whatsAppUrl) {
-        window.open(result.whatsAppUrl, '_blank');
+      if (result.success && result.invoiceNumber) {
+        setCompletedInvoice(result.invoiceNumber);
+        clearCart(brandId);
+
+        if (result.whatsAppUrl) {
+          window.open(result.whatsAppUrl, '_blank');
+        }
       } else {
-        setErrorMessage(result.error || 'Failed to verify order details against server');
+        setErrorMessage(result.error || 'Failed to place order.');
       }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Error communicating with server');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error communicating with server';
+      setErrorMessage(msg);
     } finally {
       setIsVerifying(false);
     }
   };
+
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 w-full flex-1">
@@ -217,6 +248,63 @@ export default function BrandCartPage() {
               </div>
             </div>
 
+            {/* Customer Information (Required) */}
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-slate-950 dark:text-white uppercase tracking-wider">
+                  Customer Information <span className="text-red-500">*</span>
+                </h2>
+                <span className="text-[11px] text-slate-500">Required for official invoice generation</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Full Name</label>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="e.g. Anand Kumar"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Phone (WhatsApp)</label>
+                  <div className="relative">
+                    <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="e.g. +91 97917 19662"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Email Address</label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="email"
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
+                      placeholder="e.g. customer@example.com"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Delivery & Fulfillment Details */}
             <div className="p-5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
               <h2 className="text-sm font-bold text-slate-950 dark:text-white uppercase tracking-wider">
@@ -278,72 +366,109 @@ export default function BrandCartPage() {
 
           {/* Right Column: Summary & WhatsApp CTA */}
           <div className="lg:col-span-4 space-y-4">
-            <div className="p-6 rounded-2xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 shadow-xl space-y-5 sticky top-24">
-              <h2 className="text-base font-bold text-slate-950 dark:text-white tracking-tight pb-3 border-b border-slate-200 dark:border-slate-800">
-                Order Summary
-              </h2>
+            {completedInvoice ? (
+              <div className="p-6 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-4">
+                <div className="w-14 h-14 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-emerald-600 dark:text-emerald-400">
+                    Order Submitted!
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+                    Your order status is <span className="font-bold text-amber-500">PENDING</span> stock confirmation.
+                  </p>
+                </div>
+                <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-emerald-500/20">
+                  <div className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Your Invoice Number</div>
+                  <div className="text-xl font-black text-slate-900 dark:text-white mt-1">{completedInvoice}</div>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  WhatsApp chat was launched to send your request. An admin will review stock and dispatch a confirmation email to <strong className="text-slate-700 dark:text-slate-300">{customerEmail}</strong> upon approval.
+                </p>
+                <Link
+                  href={`/${brand.id}/catalog`}
+                  className="block w-full py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl text-xs font-bold hover:opacity-90 transition-opacity"
+                >
+                  Continue Shopping
+                </Link>
+              </div>
+            ) : (
+              <div className="p-6 rounded-2xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 shadow-xl space-y-5 sticky top-24">
+                <h2 className="text-base font-bold text-slate-950 dark:text-white tracking-tight pb-3 border-b border-slate-200 dark:border-slate-800">
+                  Order Summary
+                </h2>
 
-              <div className="space-y-2.5 text-xs text-slate-700 dark:text-slate-300">
-                <div className="flex justify-between">
-                  <span className="text-slate-500 dark:text-slate-400">Items Total ({items.reduce((s, i) => s + i.quantity, 0)}):</span>
-                  <span className="font-semibold text-slate-950 dark:text-white">{formatPrice(subtotal)}</span>
+                <div className="space-y-2.5 text-xs text-slate-700 dark:text-slate-300">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">Items Total ({items.reduce((s, i) => s + i.quantity, 0)}):</span>
+                    <span className="font-semibold text-slate-950 dark:text-white">{formatPrice(subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">Delivery:</span>
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">FREE (~{brand.freeDeliveryRadiusKm}km)</span>
+                  </div>
+                  {savings > 0 && (
+                    <div className="flex justify-between text-emerald-800 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-lg border border-emerald-200 dark:border-emerald-800/40">
+                      <span className="flex items-center gap-1 font-semibold">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Total Savings:
+                      </span>
+                      <span className="font-bold">{formatPrice(savings)}</span>
+                    </div>
+                  )}
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500 dark:text-slate-400">Delivery:</span>
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">FREE (~{brand.freeDeliveryRadiusKm}km)</span>
+
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">Order Total</span>
+                    <span className="text-2xl font-black text-slate-950 dark:text-white">{formatPrice(subtotal)}</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 text-right">
+                    Pay on delivery / <br /> pickup
+                  </span>
                 </div>
-                {savings > 0 && (
-                  <div className="flex justify-between text-emerald-800 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-lg border border-emerald-200 dark:border-emerald-800/40">
-                    <span className="flex items-center gap-1 font-semibold">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Total Savings:
-                    </span>
-                    <span className="font-bold">{formatPrice(savings)}</span>
+
+                {errorMessage && (
+                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{errorMessage}</span>
                   </div>
                 )}
-              </div>
 
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                <div>
-                  <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">Estimated Amount</span>
-                  <span className="text-2xl font-black text-slate-950 dark:text-white">{formatPrice(subtotal)}</span>
+                {/* Checkout CTA */}
+                <button
+                  onClick={handleCheckout}
+                  disabled={isVerifying}
+                  className="w-full py-4 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-emerald-900/30 transition-all transform active:scale-98 disabled:opacity-50"
+                  id="main-cart-whatsapp-checkout"
+                >
+                  {isVerifying ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Creating Order & Invoice...</span>
+                    </>
+                  ) : (
+                    <>
+                      <MessageCircle className="w-5 h-5 fill-white text-white" />
+                      <span>Create Order & Open WhatsApp</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
+                  <p className="flex items-center gap-1.5 text-slate-900 dark:text-slate-300 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>Authoritative Invoice Generated</span>
+                  </p>
+                  <p>Order is registered server-side with a unique invoice number. Stock is atomically reserved upon admin confirmation.</p>
                 </div>
-                <span className="text-[11px] text-slate-500 dark:text-slate-400 text-right">
-                  Manual Payment <br /> upon dispatch
-                </span>
               </div>
-
-              {/* Checkout CTA */}
-              <button
-                onClick={handleCheckout}
-                disabled={isVerifying}
-                className="w-full py-4 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-emerald-900/30 transition-all transform active:scale-98 disabled:opacity-50"
-                id="main-cart-whatsapp-checkout"
-              >
-                {isVerifying ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Verifying Authoritative Prices...</span>
-                  </>
-                ) : (
-                  <>
-                    <MessageCircle className="w-5 h-5 fill-white text-white" />
-                    <span>Order via WhatsApp ({brand.whatsappNumber})</span>
-                  </>
-                )}
-              </button>
-
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
-                <p className="flex items-center gap-1.5 text-slate-900 dark:text-slate-300 font-semibold">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span>Authoritative Price Protected</span>
-                </p>
-                <p>Prices are verified against the store catalog before generating your WhatsApp order message.</p>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
     </div>
   );
 }
+
