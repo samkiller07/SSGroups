@@ -1,161 +1,17 @@
 -- =========================================================================
--- SS Multi-Brand Platform: Production Supabase / PostgreSQL Schema (V2)
--- Brands: SS Aquarium, Kirubai Cloud Kitchen, SS Vision 360 (+ Future Brands)
+-- SS MULTI-BRAND COMMERCE PLATFORM: PRODUCTION ORDERS & PRIVILEGES MIGRATION
+-- Execute this script once in the Supabase SQL Editor (https://supabase.com/dashboard/project/_/sql)
+-- Safe to re-run (idempotent, does NOT drop or destroy existing data)
 -- =========================================================================
 
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- 1. Ensure public schema usage
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
--- 1. BRANDS TABLE
-CREATE TABLE IF NOT EXISTS public.brands (
-    id TEXT PRIMARY KEY, -- 'aquarium', 'kirubai', 'vision-360'
-    name TEXT NOT NULL,
-    tagline TEXT NOT NULL,
-    description TEXT,
-    since_year INT,
-    logo_url TEXT,
-    phone_primary TEXT NOT NULL,
-    phone_secondary TEXT,
-    whatsapp_number TEXT NOT NULL,
-    whatsapp_channel_url TEXT,
-    instagram_url TEXT,
-    google_maps_url TEXT,
-    plus_code TEXT,
-    address TEXT NOT NULL,
-    city TEXT DEFAULT 'Coimbatore',
-    opening_time TEXT NOT NULL,
-    closing_time TEXT NOT NULL,
-    holiday TEXT,
-    delivery_note TEXT,
-    free_delivery_radius_km NUMERIC DEFAULT 2,
-    theme_primary TEXT NOT NULL,
-    theme_accent TEXT NOT NULL,
-    theme_dark TEXT NOT NULL,
-    theme_surface TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 2. CATEGORIES TABLE
-CREATE TABLE IF NOT EXISTS public.categories (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    brand_id TEXT NOT NULL REFERENCES public.brands(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    description TEXT,
-    sort_order INT DEFAULT 0,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(brand_id, slug)
-);
-
-CREATE INDEX IF NOT EXISTS idx_categories_brand_active ON public.categories(brand_id, is_active);
-
--- 3. CATALOG ITEMS (PRODUCTS & SERVICES) TABLE
-CREATE TABLE IF NOT EXISTS public.catalog_items (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    brand_id TEXT NOT NULL REFERENCES public.brands(id) ON DELETE CASCADE,
-    category_id UUID REFERENCES public.categories(id) ON DELETE SET NULL,
-    name TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    item_type TEXT NOT NULL CHECK (item_type IN ('PRODUCT', 'SERVICE')),
-    short_description TEXT,
-    description TEXT NOT NULL,
-    original_price NUMERIC(10, 2),
-    offer_price NUMERIC(10, 2),
-    unit_type TEXT NOT NULL DEFAULT 'piece',
-    unit_value NUMERIC(10, 2) NOT NULL DEFAULT 1,
-    stock_quantity INT, -- null for services or untracked
-    is_available BOOLEAN DEFAULT TRUE,
-    is_featured BOOLEAN DEFAULT FALSE,
-    is_hero_offer BOOLEAN DEFAULT FALSE,
-    is_client_verified BOOLEAN DEFAULT FALSE,
-    promotional_badge TEXT,
-    specifications JSONB DEFAULT '{}'::jsonb,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(brand_id, slug)
-);
-
-CREATE INDEX IF NOT EXISTS idx_catalog_brand_type ON public.catalog_items(brand_id, item_type, is_active);
-CREATE INDEX IF NOT EXISTS idx_catalog_hero_offers ON public.catalog_items(brand_id, is_hero_offer) WHERE is_hero_offer = TRUE;
-
--- 4. PRODUCT IMAGES TABLE
-CREATE TABLE IF NOT EXISTS public.product_images (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    catalog_item_id UUID NOT NULL REFERENCES public.catalog_items(id) ON DELETE CASCADE,
-    image_url TEXT NOT NULL,
-    alt_text TEXT,
-    sort_order INT DEFAULT 0,
-    is_primary BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_product_images_item ON public.product_images(catalog_item_id, is_primary);
-
--- 5. DAILY HERO STATUSES TABLE
-CREATE TABLE IF NOT EXISTS public.daily_statuses (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    brand_id TEXT NOT NULL REFERENCES public.brands(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    short_message TEXT NOT NULL,
-    detailed_message TEXT,
-    image_url TEXT,
-    cta_label TEXT,
-    cta_destination TEXT,
-    publish_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    expiry_date DATE,
-    status_type TEXT NOT NULL DEFAULT 'DAILY_UPDATE' CHECK (status_type IN ('DAILY_UPDATE', 'TODAYS_SPECIAL', 'SPECIAL_OFFER', 'NEW_ARRIVAL', 'ANNOUNCEMENT', 'SERVICE_UPDATE', 'HOLIDAY', 'DELIVERY_UPDATE')),
-    priority INT DEFAULT 1,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_daily_statuses_brand_date ON public.daily_statuses(brand_id, publish_date, is_active);
-
--- 6. STORAGE BUCKET FOR PRODUCT IMAGES (Supabase Storage)
-INSERT INTO storage.buckets (id, name, public) 
-VALUES ('catalog-images', 'catalog-images', true)
-ON CONFLICT (id) DO NOTHING;
-
--- =========================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
--- =========================================================================
-
-ALTER TABLE public.brands ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.catalog_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.product_images ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.daily_statuses ENABLE ROW LEVEL SECURITY;
-
--- Public Read Access for active catalog items, brands & active unexpired daily statuses
-CREATE POLICY "Public brands view" ON public.brands FOR SELECT USING (true);
-CREATE POLICY "Public categories view" ON public.categories FOR SELECT USING (is_active = true);
-CREATE POLICY "Public catalog items view" ON public.catalog_items FOR SELECT USING (is_active = true);
-CREATE POLICY "Public product images view" ON public.product_images FOR SELECT USING (true);
-CREATE POLICY "Public daily statuses view" ON public.daily_statuses FOR SELECT USING (
-    is_active = true AND 
-    publish_date <= CURRENT_DATE AND 
-    (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
-);
-
--- Authenticated Admin Full CRUD Access
-CREATE POLICY "Admin brands write" ON public.brands FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Admin categories write" ON public.categories FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Admin catalog items write" ON public.catalog_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Admin product images write" ON public.product_images FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Admin daily statuses write" ON public.daily_statuses FOR ALL TO authenticated USING (true) WITH CHECK (true);
-
--- =========================================================================
--- 7. ORDERS & ORDER ITEMS TABLES (V2 PRODUCTION WORKFLOW)
--- =========================================================================
-
+-- 2. CREATE / UPDATE orders TABLE (TEXT IDs for application compatibility)
 CREATE TABLE IF NOT EXISTS public.orders (
     id TEXT PRIMARY KEY,
     invoice_number TEXT UNIQUE NOT NULL,
-    brand_id TEXT NOT NULL REFERENCES public.brands(id) ON DELETE RESTRICT,
+    brand_id TEXT NOT NULL,
     customer_name TEXT NOT NULL,
     customer_phone TEXT NOT NULL,
     customer_email TEXT NOT NULL,
@@ -172,7 +28,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
     cancelled_at TIMESTAMPTZ
 );
 
--- Safe migration if tables previously existed with UUID id
+-- Safe migration if tables existed previously with UUID id
 DO $$
 BEGIN
     IF EXISTS (
@@ -185,19 +41,13 @@ BEGIN
         ALTER TABLE public.order_items ALTER COLUMN id TYPE TEXT;
         ALTER TABLE public.order_items ALTER COLUMN order_id TYPE TEXT;
         ALTER TABLE public.order_items ALTER COLUMN catalog_item_id TYPE TEXT;
-        ALTER TABLE public.order_items 
-            ADD CONSTRAINT order_items_order_id_fkey 
-            FOREIGN KEY (order_id) REFERENCES public.orders(id) ON DELETE CASCADE;
     END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_orders_brand_status ON public.orders(brand_id, status);
-CREATE INDEX IF NOT EXISTS idx_orders_created_at ON public.orders(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_invoice ON public.orders(invoice_number);
-
+-- 3. CREATE / UPDATE order_items TABLE
 CREATE TABLE IF NOT EXISTS public.order_items (
     id TEXT PRIMARY KEY,
-    order_id TEXT NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    order_id TEXT NOT NULL,
     catalog_item_id TEXT NOT NULL,
     product_name TEXT NOT NULL,
     quantity INT NOT NULL CHECK (quantity > 0),
@@ -208,9 +58,20 @@ CREATE TABLE IF NOT EXISTS public.order_items (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items(order_id);
+-- Ensure foreign key from order_items to orders
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'order_items_order_id_fkey' AND table_schema = 'public'
+    ) THEN
+        ALTER TABLE public.order_items 
+            ADD CONSTRAINT order_items_order_id_fkey 
+            FOREIGN KEY (order_id) REFERENCES public.orders(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
--- 8. INVOICE SEQUENCES TABLE
+-- 4. CREATE invoice_sequences TABLE
 CREATE TABLE IF NOT EXISTS public.invoice_sequences (
     brand_id TEXT NOT NULL,
     year INT NOT NULL,
@@ -218,7 +79,13 @@ CREATE TABLE IF NOT EXISTS public.invoice_sequences (
     PRIMARY KEY (brand_id, year)
 );
 
--- ATOMIC INVOICE NUMBER GENERATION FUNCTION
+-- 5. INDEXES FOR PERFORMANCE
+CREATE INDEX IF NOT EXISTS idx_orders_brand_status ON public.orders(brand_id, status);
+CREATE INDEX IF NOT EXISTS idx_orders_created_at ON public.orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_invoice ON public.orders(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items(order_id);
+
+-- 6. ATOMIC INVOICE NUMBER GENERATION RPC
 CREATE OR REPLACE FUNCTION public.generate_invoice_number(p_brand_id TEXT)
 RETURNS TEXT AS $$
 DECLARE
@@ -246,9 +113,9 @@ BEGIN
     v_invoice := v_prefix || '-' || v_year::TEXT || '-' || LPAD(v_seq::TEXT, 6, '0');
     RETURN v_invoice;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 9. ATOMIC STOCK CONFIRMATION FUNCTION
+-- 7. ATOMIC STOCK CONFIRMATION RPC
 CREATE OR REPLACE FUNCTION public.confirm_order_and_deduct_stock(p_order_id TEXT)
 RETURNS JSONB AS $$
 DECLARE
@@ -262,7 +129,7 @@ BEGIN
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RETURN jsonb_build_object('success', false, 'error', 'Order not found');
+        RETURN jsonb_build_object('success', false, 'error', 'Order not found in database.');
     END IF;
 
     IF v_order.status = 'CONFIRMED' THEN
@@ -283,7 +150,7 @@ BEGIN
     LOOP
         IF v_item.stock_quantity IS NOT NULL THEN
             IF v_item.stock_quantity < v_item.quantity THEN
-                -- Insufficient stock: abort transaction immediately
+                -- Insufficient stock: abort confirmation immediately
                 RETURN jsonb_build_object(
                     'success', false,
                     'error', 'Insufficient stock for ' || v_item.product_name || '. Required: ' || v_item.quantity || ', Available: ' || v_item.stock_quantity
@@ -317,9 +184,9 @@ BEGIN
         'message', 'Order confirmed and stock deducted successfully.'
     );
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 10. CANCEL ORDER FUNCTION
+-- 8. SAFE CANCEL ORDER RPC
 CREATE OR REPLACE FUNCTION public.cancel_order_safe(p_order_id TEXT)
 RETURNS JSONB AS $$
 DECLARE
@@ -331,7 +198,7 @@ BEGIN
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RETURN jsonb_build_object('success', false, 'error', 'Order not found');
+        RETURN jsonb_build_object('success', false, 'error', 'Order not found in database.');
     END IF;
 
     IF v_order.status = 'CANCELLED' THEN
@@ -349,26 +216,23 @@ BEGIN
 
     RETURN jsonb_build_object('success', true, 'order_id', p_order_id, 'message', 'Order cancelled safely.');
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =========================================================================
--- ROW LEVEL SECURITY (RLS) & ESSENTIAL TABLE PRIVILEGES
+-- 9. ESSENTIAL PRIVILEGE GRANTS (CRITICAL TO FIX 42501 PERMISSION DENIED)
 -- =========================================================================
 
-ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.invoice_sequences ENABLE ROW LEVEL SECURITY;
-
--- -- Grants for service_role, authenticated, and anon
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+-- Grant full control on all tables, sequences, and functions to service_role
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO service_role;
 
+-- Specifically grant on order tables
 GRANT ALL ON TABLE public.orders TO service_role;
 GRANT ALL ON TABLE public.order_items TO service_role;
 GRANT ALL ON TABLE public.invoice_sequences TO service_role;
 
+-- Grant SELECT, INSERT on public tables to anon and authenticated
 GRANT SELECT, INSERT ON public.orders TO anon, authenticated;
 GRANT SELECT, INSERT ON public.order_items TO anon, authenticated;
 GRANT SELECT, UPDATE ON public.invoice_sequences TO anon, authenticated;
@@ -377,20 +241,37 @@ GRANT SELECT ON public.categories TO anon, authenticated;
 GRANT SELECT ON public.catalog_items TO anon, authenticated;
 GRANT SELECT ON public.daily_statuses TO anon, authenticated;
 
--- Policies
+-- Future tables default grants
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO service_role;
+
+-- =========================================================================
+-- 10. ROW LEVEL SECURITY (RLS) POLICIES
+-- =========================================================================
+
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invoice_sequences ENABLE ROW LEVEL SECURITY;
+
+-- Clean existing policies
 DROP POLICY IF EXISTS "Service role full access orders" ON public.orders;
 DROP POLICY IF EXISTS "Service role full access order items" ON public.order_items;
 DROP POLICY IF EXISTS "Service role full access invoice sequences" ON public.invoice_sequences;
 DROP POLICY IF EXISTS "Public create pending order" ON public.orders;
 DROP POLICY IF EXISTS "Public create order items" ON public.order_items;
+DROP POLICY IF EXISTS "Admin orders view" ON public.orders;
+DROP POLICY IF EXISTS "Admin orders update" ON public.orders;
+DROP POLICY IF EXISTS "Admin order items view" ON public.order_items;
 DROP POLICY IF EXISTS "Public view orders" ON public.orders;
 DROP POLICY IF EXISTS "Public view order items" ON public.order_items;
 
+-- Service role bypasses RLS
 CREATE POLICY "Service role full access orders" ON public.orders FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access order items" ON public.order_items FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access invoice sequences" ON public.invoice_sequences FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- Anonymous insert with strict constraint (status must be PENDING, confirmed_at is null)
+-- Public / anon order creation (Must be PENDING status)
 CREATE POLICY "Public create pending order" ON public.orders
     FOR INSERT TO anon, authenticated
     WITH CHECK (status = 'PENDING' AND confirmed_at IS NULL AND cancelled_at IS NULL);

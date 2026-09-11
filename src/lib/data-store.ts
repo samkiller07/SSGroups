@@ -351,6 +351,15 @@ class DataRepository {
     };
   }
 
+  public addOrder(order: Order): void {
+    const idx = this.orders.findIndex((o) => o.id === order.id);
+    if (idx >= 0) {
+      this.orders[idx] = order;
+    } else {
+      this.orders.unshift(order);
+    }
+  }
+
   public confirmOrderAndDeductStock(orderId: string): { success: boolean; order?: Order; error?: string } {
     const order = this.orders.find((o) => o.id === orderId);
     if (!order) {

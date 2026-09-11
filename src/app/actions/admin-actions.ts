@@ -12,7 +12,13 @@ import { formatPriceWithUnit } from '@/lib/units';
 import { generateCartWhatsAppUrl, generateOrderWhatsAppUrl } from '@/lib/whatsapp';
 import { sendOrderConfirmationEmail } from '@/lib/email';
 
-
+function safeRevalidatePath(path: string) {
+  try {
+    revalidatePath(path);
+  } catch {
+    // Graceful no-op in headless/test environments where Next static generation store is not initialized
+  }
+}
 export async function adminLoginAction(formData: FormData) {
   const email = (formData.get('email') as string) || '';
   const password = (formData.get('password') as string) || '';
@@ -419,16 +425,55 @@ export async function verifyAndGenerateWhatsAppOrder(
 }
 
 // =========================================================================
-// ORDER MANAGEMENT SERVER ACTIONS (V2 PRODUCTION WORKFLOW)
+// ORDER MANAGEMENT SERVER ACTIONS (SUPABASE PERSISTENCE - SINGLE SOURCE OF TRUTH)
 // =========================================================================
+
+/**
+ * Maps raw Supabase PostgreSQL row to TypeScript Order domain model.
+ */
+function mapDbOrderToOrder(row: any): Order {
+  const items = Array.isArray(row.items) ? row.items : [];
+  return {
+    id: row.id,
+    invoiceNumber: row.invoice_number,
+    brandId: row.brand_id as any,
+    customerName: row.customer_name,
+    customerPhone: row.customer_phone,
+    customerEmail: row.customer_email,
+    deliveryMethod: row.delivery_method,
+    customerNote: row.customer_note || undefined,
+    subtotal: Number(row.subtotal),
+    savings: Number(row.savings || 0),
+    totalAmount: Number(row.total_amount),
+    status: row.status as OrderStatus,
+    confirmationEmailSentAt: row.confirmation_email_sent_at || null,
+    confirmationEmailError: row.confirmation_email_error || null,
+    createdAt: row.created_at,
+    confirmedAt: row.confirmed_at || null,
+    cancelledAt: row.cancelled_at || null,
+    items: items.map((oi: any) => ({
+      id: oi.id,
+      orderId: oi.order_id,
+      catalogItemId: oi.catalog_item_id,
+      productName: oi.product_name,
+      quantity: Number(oi.quantity),
+      unitType: oi.unit_type,
+      unitValue: Number(oi.unit_value || 1),
+      unitPrice: Number(oi.unit_price),
+      lineTotal: Number(oi.line_total),
+      createdAt: oi.created_at,
+    })),
+  };
+}
 
 /**
  * Customer Checkout Action:
  * 1. Validates customer info & cart items with Zod
- * 2. Recalculates authoritative server-side pricing
- * 3. Generates unique, sequential invoice number
- * 4. Creates PENDING order with items (STOCK REMAINS UNTOUCHED)
- * 5. Generates WhatsApp deep-link with invoice number & order breakdown
+ * 2. Authoritative server-side price lookup & recalculation
+ * 3. Generates unique sequential invoice number
+ * 4. Inserts into Supabase PostgreSQL (orders + order_items)
+ * 5. Returns success ONLY after database write succeeds
+ * 6. Generates WhatsApp deep-link with invoice number & order breakdown
  */
 export async function createCustomerOrderAction(rawInput: unknown) {
   const parseResult = customerCheckoutSchema.safeParse(rawInput);
@@ -445,80 +490,227 @@ export async function createCustomerOrderAction(rawInput: unknown) {
     return { success: false, error: 'Invalid brand selected.' };
   }
 
-  // Create PENDING order via authoritative repository (Stock is NOT reduced)
-  const result = dataRepository.createOrder(validData);
-  if (!result.success || !result.order) {
-    return {
-      success: false,
-      error: result.error || 'Failed to create order.',
-    };
+  if (!validData.items || validData.items.length === 0) {
+    return { success: false, error: 'Order must contain at least one item.' };
   }
 
-  const order = result.order;
+  // Server-side authoritative price verification
+  let calculatedSubtotal = 0;
+  let calculatedSavings = 0;
+  const verifiedItems: {
+    catalogItemId: string;
+    productName: string;
+    quantity: number;
+    unitType: string;
+    unitValue: number;
+    unitPrice: number;
+    lineTotal: number;
+  }[] = [];
 
-  // Supabase sync if configured
+  for (const clientItem of validData.items) {
+    if (clientItem.quantity <= 0) continue;
+
+    const serverItem = dataRepository.getItemById(clientItem.catalogItemId);
+    if (!serverItem) {
+      return {
+        success: false,
+        error: `Item not found or removed from catalog: ${clientItem.catalogItemId}`,
+      };
+    }
+
+    if (serverItem.brandId !== validData.brandId) {
+      return {
+        success: false,
+        error: `Security violation: Item "${serverItem.name}" does not belong to ${brand.name}`,
+      };
+    }
+
+    if (!serverItem.isAvailable) {
+      return {
+        success: false,
+        error: `Item "${serverItem.name}" is currently out of stock.`,
+      };
+    }
+
+    const authoritativePrice = serverItem.offerPrice ?? serverItem.originalPrice ?? 0;
+    const lineTotal = authoritativePrice * clientItem.quantity;
+    calculatedSubtotal += lineTotal;
+
+    if (serverItem.originalPrice && serverItem.offerPrice && serverItem.originalPrice > serverItem.offerPrice) {
+      calculatedSavings += (serverItem.originalPrice - serverItem.offerPrice) * clientItem.quantity;
+    }
+
+    verifiedItems.push({
+      catalogItemId: serverItem.id,
+      productName: serverItem.name,
+      quantity: clientItem.quantity,
+      unitType: serverItem.unitType,
+      unitValue: serverItem.unitValue,
+      unitPrice: authoritativePrice,
+      lineTotal,
+    });
+  }
+
+  if (verifiedItems.length === 0) {
+    return { success: false, error: 'No valid items found in order.' };
+  }
+
+  const calculatedTotal = calculatedSubtotal;
+  const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  const now = new Date().toISOString();
+  const year = new Date().getFullYear();
+  const prefix = validData.brandId === 'aquarium' ? 'SSA' : validData.brandId === 'kirubai' ? 'KCK' : 'SSV';
+
+  let invoiceNumber = '';
+
+  // Supabase Persistence (Single Source of Truth)
   if (isSupabaseConfigured) {
     const supabase = getSupabaseServer();
-    if (supabase) {
-      try {
-        await supabase.from('orders').insert({
-          id: order.id,
-          invoice_number: order.invoiceNumber,
-          brand_id: order.brandId,
-          customer_name: order.customerName,
-          customer_phone: order.customerPhone,
-          customer_email: order.customerEmail,
-          delivery_method: order.deliveryMethod,
-          customer_note: order.customerNote || null,
-          subtotal: order.subtotal,
-          savings: order.savings,
-          total_amount: order.totalAmount,
-          status: 'PENDING',
-          created_at: order.createdAt,
-        });
-
-        if (order.items && order.items.length > 0) {
-          const itemsPayload = order.items.map((oi) => ({
-            id: oi.id,
-            order_id: order.id,
-            catalog_item_id: oi.catalogItemId,
-            product_name: oi.productName,
-            quantity: oi.quantity,
-            unit_type: oi.unitType,
-            unit_value: oi.unitValue,
-            unit_price: oi.unitPrice,
-            line_total: oi.lineTotal,
-            created_at: oi.createdAt,
-          }));
-          await supabase.from('order_items').insert(itemsPayload);
-        }
-      } catch (dbErr) {
-        console.warn('[Supabase Orders Sync] In-memory active, PostgreSQL sync warning:', dbErr);
-      }
+    if (!supabase) {
+      return {
+        success: false,
+        error: 'Database connection is unavailable. Please try again later.',
+      };
     }
+
+    // Generate invoice number via Supabase RPC or sequential count
+    try {
+      const { data: rpcInvoice, error: rpcErr } = await supabase.rpc('generate_invoice_number', {
+        p_brand_id: validData.brandId,
+      });
+      if (!rpcErr && rpcInvoice) {
+        invoiceNumber = rpcInvoice;
+      }
+    } catch {
+      // ignore, proceed with fallback
+    }
+
+    if (!invoiceNumber) {
+      const { count } = await supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('brand_id', validData.brandId);
+      const seq = (count || 0) + 1;
+      invoiceNumber = `${prefix}-${year}-${String(seq).padStart(6, '0')}`;
+    }
+
+    // 1. Insert order into Supabase
+    const { error: orderError } = await supabase.from('orders').insert({
+      id: orderId,
+      invoice_number: invoiceNumber,
+      brand_id: validData.brandId,
+      customer_name: validData.customerName.trim(),
+      customer_phone: validData.customerPhone.trim(),
+      customer_email: validData.customerEmail.trim(),
+      delivery_method: validData.deliveryMethod,
+      customer_note: validData.customerNote?.trim() || null,
+      subtotal: calculatedSubtotal,
+      savings: calculatedSavings,
+      total_amount: calculatedTotal,
+      status: 'PENDING',
+      created_at: now,
+    });
+
+    if (orderError) {
+      console.error('[createCustomerOrderAction] Supabase order insert failed:', orderError);
+      return {
+        success: false,
+        error: `Failed to save order to database: ${orderError.message || 'Permission or connection error'}. Please try again.`,
+      };
+    }
+
+    // 2. Insert order items into Supabase
+    const itemsPayload = verifiedItems.map((oi, idx) => ({
+      id: `oi-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+      order_id: orderId,
+      catalog_item_id: oi.catalogItemId,
+      product_name: oi.productName,
+      quantity: oi.quantity,
+      unit_type: oi.unitType,
+      unit_value: oi.unitValue,
+      unit_price: oi.unitPrice,
+      line_total: oi.lineTotal,
+      created_at: now,
+    }));
+
+    const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
+    if (itemsError) {
+      console.error('[createCustomerOrderAction] Supabase items insert failed:', itemsError);
+      // Rollback orphaned order row
+      await supabase.from('orders').delete().eq('id', orderId);
+      return {
+        success: false,
+        error: `Failed to record line items: ${itemsError.message || 'Database error'}. Order was not created.`,
+      };
+    }
+  } else {
+    // Development fallback without Supabase
+    const seq = dataRepository.getOrders({ brandId: validData.brandId }).length + 1;
+    invoiceNumber = `${prefix}-${year}-${String(seq).padStart(6, '0')}`;
   }
 
-  // Generate WhatsApp message with invoice number and customer details
-  const whatsAppUrl = generateOrderWhatsAppUrl(brand, order);
+  // Construct domain order object
+  const createdOrder: Order = {
+    id: orderId,
+    invoiceNumber,
+    brandId: validData.brandId,
+    customerName: validData.customerName.trim(),
+    customerPhone: validData.customerPhone.trim(),
+    customerEmail: validData.customerEmail.trim(),
+    deliveryMethod: validData.deliveryMethod,
+    customerNote: validData.customerNote?.trim() || undefined,
+    subtotal: calculatedSubtotal,
+    savings: calculatedSavings,
+    totalAmount: calculatedTotal,
+    status: 'PENDING',
+    confirmationEmailSentAt: null,
+    confirmationEmailError: null,
+    createdAt: now,
+    confirmedAt: null,
+    cancelledAt: null,
+    items: verifiedItems.map((vi, idx) => ({
+      id: `oi-${Date.now()}-${idx}`,
+      orderId,
+      catalogItemId: vi.catalogItemId,
+      productName: vi.productName,
+      quantity: vi.quantity,
+      unitType: vi.unitType,
+      unitValue: vi.unitValue,
+      unitPrice: vi.unitPrice,
+      lineTotal: vi.lineTotal,
+      createdAt: now,
+    })),
+  };
+
+  // Keep in-memory store in sync for fast local dev
+  dataRepository.addOrder(createdOrder);
+
+  // Generate WhatsApp deep-link
+  const whatsAppUrl = generateOrderWhatsAppUrl(brand, createdOrder);
+
+  safeRevalidatePath('/admin/orders');
+  safeRevalidatePath('/admin/dashboard');
 
   return {
     success: true,
-    orderId: order.id,
-    invoiceNumber: order.invoiceNumber,
+    orderId: createdOrder.id,
+    invoiceNumber: createdOrder.invoiceNumber,
     whatsAppUrl,
-    subtotal: order.subtotal,
-    savings: order.savings,
-    totalAmount: order.totalAmount,
+    subtotal: createdOrder.subtotal,
+    savings: createdOrder.savings,
+    totalAmount: createdOrder.totalAmount,
   };
 }
 
 /**
  * Admin Confirm Order Action:
  * 1. Requires Admin Authentication
- * 2. Atomically validates stock for ALL items (fails if any item lacks stock)
- * 3. Atomically deducts stock and sets status = 'CONFIRMED'
- * 4. Dispatches branded HTML confirmation email via SMTP
- * 5. CRITICAL: Email failure does NOT rollback the confirmation or stock deduction
+ * 2. Checks order is PENDING (prevents duplicate confirmation)
+ * 3. Atomically validates current stock in Supabase
+ * 4. Atomically deducts stock from catalog_items
+ * 5. Updates status to CONFIRMED with timestamp
+ * 6. Dispatches branded HTML confirmation email via Nodemailer
+ * 7. If email fails, order & stock confirmation remains CONFIRMED
  */
 export async function confirmAdminOrderAction(orderId: string) {
   await requireAdminAuth();
@@ -527,47 +719,129 @@ export async function confirmAdminOrderAction(orderId: string) {
     return { success: false, error: 'Valid order ID required.' };
   }
 
-  // 1. Atomic stock confirmation pre-check & deduction
-  const confirmResult = dataRepository.confirmOrderAndDeductStock(orderId);
-  if (!confirmResult.success || !confirmResult.order) {
-    return {
-      success: false,
-      error: confirmResult.error || 'Failed to confirm order.',
-    };
-  }
+  let confirmedOrder: Order | null = null;
 
-  const confirmedOrder = confirmResult.order;
-
-  // Mirror update to Supabase if configured
   if (isSupabaseConfigured) {
     const supabase = getSupabaseServer();
-    if (supabase) {
-      try {
-        await supabase
-          .from('orders')
-          .update({
-            status: 'CONFIRMED',
-            confirmed_at: confirmedOrder.confirmedAt,
-          })
-          .eq('id', orderId);
+    if (!supabase) {
+      return { success: false, error: 'Database connection unavailable.' };
+    }
 
-        // Update stocks in Supabase
-        for (const item of confirmedOrder.items || []) {
-          const catalogItem = dataRepository.getItemById(item.catalogItemId);
-          if (catalogItem && catalogItem.stockQuantity !== null) {
-            await supabase
-              .from('catalog_items')
-              .update({ stock_quantity: catalogItem.stockQuantity })
-              .eq('id', item.catalogItemId);
+    // 1. Fetch current order from Supabase
+    const { data: orderRow, error: fetchErr } = await supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .eq('id', orderId)
+      .single();
+
+    if (fetchErr || !orderRow) {
+      return { success: false, error: 'Order not found in database.' };
+    }
+
+    if (orderRow.status === 'CONFIRMED') {
+      return { success: false, error: 'Order has already been confirmed.' };
+    }
+
+    if (orderRow.status === 'CANCELLED') {
+      return { success: false, error: 'Cancelled orders cannot be confirmed.' };
+    }
+
+    // 2. Try atomic database RPC confirm_order_and_deduct_stock
+    let rpcDone = false;
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('confirm_order_and_deduct_stock', {
+        p_order_id: orderId,
+      });
+      if (!rpcErr && rpcRes) {
+        if (!rpcRes.success) {
+          return { success: false, error: rpcRes.error || 'Failed to confirm order.' };
+        }
+        rpcDone = true;
+      }
+    } catch {
+      rpcDone = false;
+    }
+
+    // 3. Fallback direct check if RPC is not installed
+    if (!rpcDone) {
+      const items = orderRow.items || [];
+      // Pre-check stock for ALL items
+      for (const item of items) {
+        const { data: catItem } = await supabase
+          .from('catalog_items')
+          .select('id, name, stock_quantity')
+          .eq('id', item.catalog_item_id)
+          .single();
+
+        if (catItem && catItem.stock_quantity !== null) {
+          if (catItem.stock_quantity < item.quantity) {
+            return {
+              success: false,
+              error: `Insufficient stock for "${catItem.name || item.product_name}". Required: ${item.quantity}, Available: ${catItem.stock_quantity}. Confirmation aborted.`,
+            };
           }
         }
-      } catch (dbErr) {
-        console.warn('[Supabase Sync Warning]', dbErr);
+      }
+
+      // Deduct stock for items
+      for (const item of items) {
+        const { data: catItem } = await supabase
+          .from('catalog_items')
+          .select('stock_quantity')
+          .eq('id', item.catalog_item_id)
+          .single();
+
+        if (catItem && catItem.stock_quantity !== null) {
+          const newStock = Math.max(0, catItem.stock_quantity - item.quantity);
+          await supabase
+            .from('catalog_items')
+            .update({ stock_quantity: newStock, updated_at: new Date().toISOString() })
+            .eq('id', item.catalog_item_id);
+        }
+      }
+
+      const confirmedAt = new Date().toISOString();
+      const { error: updateErr } = await supabase
+        .from('orders')
+        .update({
+          status: 'CONFIRMED',
+          confirmed_at: confirmedAt,
+        })
+        .eq('id', orderId);
+
+      if (updateErr) {
+        return { success: false, error: 'Failed to update order status: ' + updateErr.message };
       }
     }
+
+    // Fetch refreshed order
+    const { data: updatedRow } = await supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .eq('id', orderId)
+      .single();
+
+    confirmedOrder = updatedRow ? mapDbOrderToOrder(updatedRow) : mapDbOrderToOrder({
+      ...orderRow,
+      status: 'CONFIRMED',
+      confirmed_at: new Date().toISOString(),
+    });
+
+    // Mirror to in-memory store
+    dataRepository.confirmOrderAndDeductStock(orderId);
+  } else {
+    // In-memory fallback
+    const confirmResult = dataRepository.confirmOrderAndDeductStock(orderId);
+    if (!confirmResult.success || !confirmResult.order) {
+      return {
+        success: false,
+        error: confirmResult.error || 'Failed to confirm order.',
+      };
+    }
+    confirmedOrder = confirmResult.order;
   }
 
-  // 2. Send branded confirmation email
+  // 4. Send branded confirmation email
   let emailSent = false;
   let emailError: string | null = null;
 
@@ -575,28 +849,53 @@ export async function confirmAdminOrderAction(orderId: string) {
     const emailRes = await sendOrderConfirmationEmail(confirmedOrder);
     if (emailRes.success) {
       emailSent = true;
+      if (isSupabaseConfigured) {
+        const supabase = getSupabaseServer();
+        if (supabase) {
+          await supabase
+            .from('orders')
+            .update({
+              confirmation_email_sent_at: new Date().toISOString(),
+              confirmation_email_error: null,
+            })
+            .eq('id', orderId);
+        }
+      }
       dataRepository.updateOrderEmailStatus(orderId, {
         sentAt: new Date().toISOString(),
         error: null,
       });
     } else {
-      emailError = emailRes.error || 'Failed to dispatch email';
-      dataRepository.updateOrderEmailStatus(orderId, {
-        error: emailError,
-      });
+      emailError = emailRes.error || 'Failed to dispatch confirmation email';
+      if (isSupabaseConfigured) {
+        const supabase = getSupabaseServer();
+        if (supabase) {
+          await supabase
+            .from('orders')
+            .update({ confirmation_email_error: emailError })
+            .eq('id', orderId);
+        }
+      }
+      dataRepository.updateOrderEmailStatus(orderId, { error: emailError });
     }
   } catch (err: unknown) {
     emailError = err instanceof Error ? err.message : String(err);
-    dataRepository.updateOrderEmailStatus(orderId, {
-      error: emailError,
-    });
+    if (isSupabaseConfigured) {
+      const supabase = getSupabaseServer();
+      if (supabase) {
+        await supabase
+          .from('orders')
+          .update({ confirmation_email_error: emailError })
+          .eq('id', orderId);
+      }
+    }
+    dataRepository.updateOrderEmailStatus(orderId, { error: emailError });
   }
 
-  // Revalidate admin views
-  revalidatePath('/admin/orders');
-  revalidatePath('/admin/dashboard');
-  revalidatePath('/admin/inventory');
-  revalidatePath(`/${confirmedOrder.brandId}`);
+  safeRevalidatePath('/admin/orders');
+  safeRevalidatePath('/admin/dashboard');
+  safeRevalidatePath('/admin/inventory');
+  safeRevalidatePath(`/${confirmedOrder.brandId}`);
 
   return {
     success: true,
@@ -612,7 +911,7 @@ export async function confirmAdminOrderAction(orderId: string) {
 /**
  * Admin Cancel Order Action:
  * 1. Requires Admin Authentication
- * 2. Transitions PENDING -> CANCELLED
+ * 2. Transitions PENDING -> CANCELLED in Supabase
  * 3. Stock is UNTOUCHED
  */
 export async function cancelAdminOrderAction(orderId: string) {
@@ -622,36 +921,85 @@ export async function cancelAdminOrderAction(orderId: string) {
     return { success: false, error: 'Valid order ID required.' };
   }
 
-  const cancelResult = dataRepository.cancelOrder(orderId);
-  if (!cancelResult.success || !cancelResult.order) {
-    return {
-      success: false,
-      error: cancelResult.error || 'Failed to cancel order.',
-    };
-  }
+  let cancelledOrder: Order | null = null;
 
-  const cancelledOrder = cancelResult.order;
-
-  // Supabase sync if configured
   if (isSupabaseConfigured) {
     const supabase = getSupabaseServer();
-    if (supabase) {
-      try {
-        await supabase
-          .from('orders')
-          .update({
-            status: 'CANCELLED',
-            cancelled_at: cancelledOrder.cancelledAt,
-          })
-          .eq('id', orderId);
-      } catch (dbErr) {
-        console.warn('[Supabase Sync Warning]', dbErr);
+    if (!supabase) {
+      return { success: false, error: 'Database connection unavailable.' };
+    }
+
+    const { data: orderRow, error: fetchErr } = await supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .eq('id', orderId)
+      .single();
+
+    if (fetchErr || !orderRow) {
+      return { success: false, error: 'Order not found in database.' };
+    }
+
+    if (orderRow.status === 'CANCELLED') {
+      return { success: false, error: 'Order is already cancelled.' };
+    }
+
+    if (orderRow.status === 'CONFIRMED') {
+      return { success: false, error: 'Confirmed orders cannot be cancelled directly.' };
+    }
+
+    let rpcDone = false;
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('cancel_order_safe', {
+        p_order_id: orderId,
+      });
+      if (!rpcErr && rpcRes && rpcRes.success) {
+        rpcDone = true;
+      }
+    } catch {
+      rpcDone = false;
+    }
+
+    if (!rpcDone) {
+      const cancelledAt = new Date().toISOString();
+      const { error: cancelErr } = await supabase
+        .from('orders')
+        .update({
+          status: 'CANCELLED',
+          cancelled_at: cancelledAt,
+        })
+        .eq('id', orderId);
+
+      if (cancelErr) {
+        return { success: false, error: 'Failed to cancel order: ' + cancelErr.message };
       }
     }
+
+    const { data: updatedRow } = await supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .eq('id', orderId)
+      .single();
+
+    cancelledOrder = updatedRow ? mapDbOrderToOrder(updatedRow) : mapDbOrderToOrder({
+      ...orderRow,
+      status: 'CANCELLED',
+      cancelled_at: new Date().toISOString(),
+    });
+
+    dataRepository.cancelOrder(orderId);
+  } else {
+    const cancelResult = dataRepository.cancelOrder(orderId);
+    if (!cancelResult.success || !cancelResult.order) {
+      return {
+        success: false,
+        error: cancelResult.error || 'Failed to cancel order.',
+      };
+    }
+    cancelledOrder = cancelResult.order;
   }
 
-  revalidatePath('/admin/orders');
-  revalidatePath('/admin/dashboard');
+  safeRevalidatePath('/admin/orders');
+  safeRevalidatePath('/admin/dashboard');
 
   return {
     success: true,
@@ -663,8 +1011,9 @@ export async function cancelAdminOrderAction(orderId: string) {
 /**
  * Admin Fetch Orders Action:
  * 1. Requires Admin Authentication
- * 2. Supports Brand, Status, and Search filtering
- * 3. Returns Order KPIs (total, pending, confirmed, cancelled, confirmed revenue)
+ * 2. Reads directly from Supabase PostgreSQL (Single Source of Truth)
+ * 3. Supports Search, Brand filtering, Status filtering, and Date sorting
+ * 4. Computes KPIs from persistent database orders
  */
 export async function getAdminOrdersAction(options?: {
   brandId?: string;
@@ -673,6 +1022,73 @@ export async function getAdminOrdersAction(options?: {
 }) {
   await requireAdminAuth();
 
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      try {
+        let query = supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .order('created_at', { ascending: false });
+
+        if (options?.brandId && options.brandId !== 'all') {
+          query = query.eq('brand_id', options.brandId);
+        }
+        if (options?.status) {
+          query = query.eq('status', options.status);
+        }
+
+        const { data: dbOrders, error: ordersErr } = await query;
+        if (ordersErr) {
+          console.error('[getAdminOrdersAction] Supabase query error:', ordersErr);
+          // Fall back to in-memory if DB read fails
+          const orders = dataRepository.getOrders(options);
+          const kpis = dataRepository.getOrderKPIs();
+          return { success: true, orders, kpis };
+        }
+
+        let mappedOrders = (dbOrders || []).map(mapDbOrderToOrder);
+
+        // Search filtering across invoice, customer name, phone, email
+        if (options?.search && options.search.trim()) {
+          const q = options.search.trim().toLowerCase();
+          mappedOrders = mappedOrders.filter(
+            (o) =>
+              o.invoiceNumber.toLowerCase().includes(q) ||
+              o.customerName.toLowerCase().includes(q) ||
+              o.customerPhone.toLowerCase().includes(q) ||
+              o.customerEmail.toLowerCase().includes(q)
+          );
+        }
+
+        // Fetch all orders for persistent KPI calculations
+        const { data: allOrdersForKpi } = await supabase
+          .from('orders')
+          .select('status, total_amount');
+
+        const kpiRows = allOrdersForKpi || [];
+        const kpis = {
+          totalOrders: kpiRows.length,
+          pendingOrders: kpiRows.filter((o: any) => o.status === 'PENDING').length,
+          confirmedOrders: kpiRows.filter((o: any) => o.status === 'CONFIRMED').length,
+          cancelledOrders: kpiRows.filter((o: any) => o.status === 'CANCELLED').length,
+          confirmedRevenue: kpiRows
+            .filter((o: any) => o.status === 'CONFIRMED')
+            .reduce((sum: number, o: any) => sum + Number(o.total_amount || 0), 0),
+        };
+
+        return {
+          success: true,
+          orders: mappedOrders,
+          kpis,
+        };
+      } catch (err) {
+        console.error('[getAdminOrdersAction] Database query exception:', err);
+      }
+    }
+  }
+
+  // In-memory fallback
   const orders = dataRepository.getOrders(options);
   const kpis = dataRepository.getOrderKPIs();
 
@@ -682,4 +1098,5 @@ export async function getAdminOrdersAction(options?: {
     kpis,
   };
 }
+
 
