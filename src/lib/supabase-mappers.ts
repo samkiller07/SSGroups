@@ -68,15 +68,28 @@ export function mapDbOrderToOrder(row: any): Order {
     createdAt: row.created_at,
     confirmedAt: row.confirmed_at || null,
     cancelledAt: row.cancelled_at || null,
-    items: items.map((it: any) => ({
-      id: it.id,
-      catalogItemId: it.catalog_item_id,
-      productName: it.product_name,
-      quantity: Number(it.quantity),
-      unitType: it.unit_type || 'piece',
-      unitValue: Number(it.unit_value || 1),
-      unitPrice: Number(it.unit_price),
-      lineTotal: Number(it.line_total),
-    })),
+    items: items.map((it: any) => {
+      const unitPrice = Number(it.unit_price);
+      const lineTotal = Number(it.line_total);
+      const qty = Number(it.quantity || 1);
+      let origPrice = it.original_price !== null && it.original_price !== undefined ? Number(it.original_price) : undefined;
+      let itemSavings = it.savings !== null && it.savings !== undefined ? Number(it.savings) : undefined;
+      if (!origPrice && items.length === 1 && Number(row.savings) > 0) {
+        origPrice = unitPrice + (Number(row.savings) / qty);
+        itemSavings = Number(row.savings);
+      }
+      return {
+        id: it.id,
+        catalogItemId: it.catalog_item_id,
+        productName: it.product_name,
+        quantity: qty,
+        unitType: it.unit_type || 'piece',
+        unitValue: Number(it.unit_value || 1),
+        unitPrice,
+        lineTotal,
+        originalPrice: origPrice,
+        savings: itemSavings,
+      };
+    }),
   };
 }

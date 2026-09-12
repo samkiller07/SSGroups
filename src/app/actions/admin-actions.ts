@@ -199,7 +199,9 @@ export async function deleteCatalogItemAction(id: string, brandId: string) {
   safeRevalidatePath(`/${brandId}`);
   safeRevalidatePath(`/${brandId}/catalog`);
   safeRevalidatePath('/admin/dashboard');
+  safeRevalidatePath('/admin/products');
   safeRevalidatePath('/admin/inventory');
+  safeRevalidatePath('/admin/orders');
 
   return { success: true };
 }
@@ -661,7 +663,8 @@ export async function createCustomerOrderAction(rawInput: unknown) {
   }
 
   // Server-side authoritative price verification
-  let calculatedSubtotal = 0;
+  let originalSubtotal = 0;
+  let finalSubtotal = 0;
   let calculatedSavings = 0;
   const verifiedItems: {
     catalogItemId: string;
@@ -671,25 +674,30 @@ export async function createCustomerOrderAction(rawInput: unknown) {
     unitValue: number;
     unitPrice: number;
     lineTotal: number;
+    originalPrice: number;
+    savings: number;
   }[] = [];
 
   for (const clientItem of validData.items) {
     if (clientItem.quantity <= 0) continue;
 
-    let serverItem = dataRepository.getItemById(clientItem.catalogItemId);
-    if (!serverItem && isSupabaseConfigured) {
+    // Single source of truth: Query Supabase FIRST
+    let serverItem: CatalogItem | null = null;
+    if (isSupabaseConfigured) {
       const supabase = getSupabaseServer();
       if (supabase) {
         const { data: dbItem } = await supabase
           .from('catalog_items')
           .select('*, images:product_images(*)')
           .eq('id', clientItem.catalogItemId)
-          .single();
+          .maybeSingle();
         if (dbItem) {
           serverItem = mapDbCatalogItemToItem(dbItem);
-          dataRepository.addCatalogItem(serverItem);
         }
       }
+    }
+    if (!serverItem) {
+      serverItem = dataRepository.getItemById(clientItem.catalogItemId) || null;
     }
     if (!serverItem) {
       return {
@@ -712,13 +720,15 @@ export async function createCustomerOrderAction(rawInput: unknown) {
       };
     }
 
-    const authoritativePrice = serverItem.offerPrice ?? serverItem.originalPrice ?? 0;
-    const lineTotal = authoritativePrice * clientItem.quantity;
-    calculatedSubtotal += lineTotal;
+    const mrp = serverItem.originalPrice ?? serverItem.offerPrice ?? 0;
+    const sellingPrice = serverItem.offerPrice ?? serverItem.originalPrice ?? 0;
+    const itemOriginalTotal = mrp * clientItem.quantity;
+    const itemSellingTotal = sellingPrice * clientItem.quantity;
+    const itemSavings = Math.max(0, itemOriginalTotal - itemSellingTotal);
 
-    if (serverItem.originalPrice && serverItem.offerPrice && serverItem.originalPrice > serverItem.offerPrice) {
-      calculatedSavings += (serverItem.originalPrice - serverItem.offerPrice) * clientItem.quantity;
-    }
+    originalSubtotal += itemOriginalTotal;
+    finalSubtotal += itemSellingTotal;
+    calculatedSavings += itemSavings;
 
     verifiedItems.push({
       catalogItemId: serverItem.id,
@@ -726,8 +736,10 @@ export async function createCustomerOrderAction(rawInput: unknown) {
       quantity: clientItem.quantity,
       unitType: serverItem.unitType,
       unitValue: serverItem.unitValue,
-      unitPrice: authoritativePrice,
-      lineTotal,
+      unitPrice: sellingPrice,
+      lineTotal: itemSellingTotal,
+      originalPrice: mrp,
+      savings: itemSavings,
     });
   }
 
@@ -735,7 +747,8 @@ export async function createCustomerOrderAction(rawInput: unknown) {
     return { success: false, error: 'No valid items found in order.' };
   }
 
-  const calculatedTotal = calculatedSubtotal;
+  const calculatedSubtotal = originalSubtotal;
+  const calculatedTotal = finalSubtotal;
   const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
   const now = new Date().toISOString();
   const year = new Date().getFullYear();
@@ -800,7 +813,7 @@ export async function createCustomerOrderAction(rawInput: unknown) {
     }
 
     // 2. Insert order items into Supabase
-    const itemsPayload = verifiedItems.map((oi, idx) => ({
+    const fullItemsPayload = verifiedItems.map((oi, idx) => ({
       id: `oi-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
       order_id: orderId,
       catalog_item_id: oi.catalogItemId,
@@ -810,10 +823,19 @@ export async function createCustomerOrderAction(rawInput: unknown) {
       unit_value: oi.unitValue,
       unit_price: oi.unitPrice,
       line_total: oi.lineTotal,
+      original_price: oi.originalPrice,
+      savings: oi.savings,
       created_at: now,
     }));
 
-    const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
+    let { error: itemsError } = await supabase.from('order_items').insert(fullItemsPayload);
+    // If table does not yet have original_price or savings columns, retry with base columns
+    if (itemsError && (itemsError.code === '42703' || itemsError.code === 'PGRST204' || itemsError.message?.includes('original_price'))) {
+      const basicItemsPayload = fullItemsPayload.map(({ original_price, savings, ...rest }) => rest);
+      const retryResult = await supabase.from('order_items').insert(basicItemsPayload);
+      itemsError = retryResult.error;
+    }
+
     if (itemsError) {
       console.error('[createCustomerOrderAction] Supabase items insert failed:', itemsError);
       // Rollback orphaned order row
@@ -858,6 +880,8 @@ export async function createCustomerOrderAction(rawInput: unknown) {
       unitValue: vi.unitValue,
       unitPrice: vi.unitPrice,
       lineTotal: vi.lineTotal,
+      originalPrice: vi.originalPrice,
+      savings: vi.savings,
       createdAt: now,
     })),
   };
@@ -1029,6 +1053,7 @@ export async function confirmAdminOrderAction(orderId: string) {
     const emailRes = await sendOrderConfirmationEmail(confirmedOrder);
     if (emailRes.success) {
       emailSent = true;
+      console.log(`[Order Confirmation] [EMAIL_SENT] Successfully sent confirmation email for ${confirmedOrder.invoiceNumber} to ${confirmedOrder.customerEmail}. Message ID: ${emailRes.messageId}`);
       if (isSupabaseConfigured) {
         const supabase = getSupabaseServer();
         if (supabase) {
@@ -1047,6 +1072,7 @@ export async function confirmAdminOrderAction(orderId: string) {
       });
     } else {
       emailError = emailRes.error || 'Failed to dispatch confirmation email';
+      console.error(`[Order Confirmation] [EMAIL_FAILED] Failed to send email for ${confirmedOrder.invoiceNumber} to ${confirmedOrder.customerEmail}. Error: ${emailError}`);
       if (isSupabaseConfigured) {
         const supabase = getSupabaseServer();
         if (supabase) {
@@ -1060,6 +1086,7 @@ export async function confirmAdminOrderAction(orderId: string) {
     }
   } catch (err: unknown) {
     emailError = err instanceof Error ? err.message : String(err);
+    console.error(`[Order Confirmation] [EMAIL_FAILED] Exception sending email for ${confirmedOrder.invoiceNumber} to ${confirmedOrder.customerEmail}. Error: ${emailError}`);
     if (isSupabaseConfigured) {
       const supabase = getSupabaseServer();
       if (supabase) {

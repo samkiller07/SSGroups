@@ -21,7 +21,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
-  themeColor: '#020b14',
+  themeColor: '#ffffff',
 };
 
 export const metadata: Metadata = {
@@ -36,7 +36,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`dark ${plusJakarta.variable} ${outfit.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${plusJakarta.variable} ${outfit.variable}`} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var m=localStorage.getItem('ss_theme_mode');if(m==='dark'){document.documentElement.classList.add('dark');document.documentElement.setAttribute('data-theme','dark');}else{document.documentElement.classList.add('light');document.documentElement.setAttribute('data-theme','light');}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-[var(--color-bg-default)] text-[var(--color-text-default)] font-sans antialiased flex flex-col selection:bg-cyan-500 selection:text-slate-950 transition-colors duration-200">
         <ThemeProvider>
           {children}
@@ -45,4 +52,3 @@ export default function RootLayout({
     </html>
   );
 }
-

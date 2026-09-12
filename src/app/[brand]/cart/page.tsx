@@ -47,11 +47,13 @@ export default function BrandCartPage() {
   const removeItem = useCartStore((state) => state.removeItem);
   const clearCart = useCartStore((state) => state.clearCart);
   const getSubtotal = useCartStore((state) => state.getSubtotal);
+  const getOriginalTotal = useCartStore((state) => state.getOriginalTotal);
   const getSavings = useCartStore((state) => state.getSavings);
 
   if (!brand) return null;
 
-  const subtotal = getSubtotal(brandId);
+  const payableTotal = getSubtotal(brandId);
+  const originalSubtotal = getOriginalTotal(brandId);
   const savings = getSavings(brandId);
 
   const handleCheckout = async () => {
@@ -401,8 +403,8 @@ export default function BrandCartPage() {
 
                 <div className="space-y-2.5 text-xs text-slate-700 dark:text-slate-300">
                   <div className="flex justify-between">
-                    <span className="text-slate-500 dark:text-slate-400">Items Total ({items.reduce((s, i) => s + i.quantity, 0)}):</span>
-                    <span className="font-semibold text-slate-950 dark:text-white">{formatPrice(subtotal)}</span>
+                    <span className="text-slate-500 dark:text-slate-400">Subtotal / MRP Value ({items.reduce((s, i) => s + i.quantity, 0)} items):</span>
+                    <span className="font-semibold text-slate-950 dark:text-white">{formatPrice(originalSubtotal)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500 dark:text-slate-400">Delivery:</span>
@@ -412,17 +414,17 @@ export default function BrandCartPage() {
                     <div className="flex justify-between text-emerald-800 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-lg border border-emerald-200 dark:border-emerald-800/40">
                       <span className="flex items-center gap-1 font-semibold">
                         <Sparkles className="w-3.5 h-3.5" />
-                        Total Savings:
+                        Savings:
                       </span>
-                      <span className="font-bold">{formatPrice(savings)}</span>
+                      <span className="font-bold">-{formatPrice(savings)}</span>
                     </div>
                   )}
                 </div>
 
                 <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
                   <div>
-                    <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">Order Total</span>
-                    <span className="text-2xl font-black text-slate-950 dark:text-white">{formatPrice(subtotal)}</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">Total Amount</span>
+                    <span className="text-2xl font-black text-slate-950 dark:text-white">{formatPrice(payableTotal)}</span>
                   </div>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400 text-right">
                     Pay on delivery / <br /> pickup

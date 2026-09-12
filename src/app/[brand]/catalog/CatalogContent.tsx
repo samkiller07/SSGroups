@@ -319,9 +319,9 @@ export function CatalogContent({ brandId, brand, initialItems, initialCategories
             </div>
           </div>
 
-          {/* Product Cards Grid */}
+          {/* Product Cards Grid (Flipkart-style density: 2 cols mobile, 3 cols tablet, 4 cols desktop) */}
           {filteredItems.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
               {filteredItems.map((item) => (
                 <ProductCard key={item.id} item={item} brand={brand} />
               ))}

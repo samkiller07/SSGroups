@@ -205,6 +205,8 @@ CREATE TABLE IF NOT EXISTS public.order_items (
     unit_value NUMERIC(10, 2) NOT NULL DEFAULT 1,
     unit_price NUMERIC(10, 2) NOT NULL,
     line_total NUMERIC(10, 2) NOT NULL,
+    original_price NUMERIC(10, 2),
+    savings NUMERIC(10, 2),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

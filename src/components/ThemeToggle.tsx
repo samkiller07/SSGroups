@@ -66,18 +66,6 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ brandId, variant = 'co
           <Moon className="w-3.5 h-3.5" />
           <span>Dark</span>
         </button>
-        <button
-          onClick={() => setTheme('system')}
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-full font-bold transition-all ${
-            theme === 'system'
-              ? 'bg-slate-800 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-          aria-label="System theme"
-        >
-          <Monitor className="w-3.5 h-3.5" />
-          <span>Auto</span>
-        </button>
       </div>
     );
   }
@@ -132,22 +120,6 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ brandId, variant = 'co
                   <span>Dark Mode</span>
                 </div>
                 {theme === 'dark' && <Check className="w-3.5 h-3.5" />}
-              </button>
-
-              <button
-                onClick={() => {
-                  setTheme('system');
-                  setOpen(false);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-colors ${
-                  theme === 'system' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:bg-slate-900 hover:text-white'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Monitor className="w-3.5 h-3.5" />
-                  <span>System Auto</span>
-                </div>
-                {theme === 'system' && <Check className="w-3.5 h-3.5" />}
               </button>
             </div>
           </>

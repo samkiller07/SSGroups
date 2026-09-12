@@ -110,7 +110,21 @@ export async function getPersistentBrandCatalog(brandId: string): Promise<Persis
     }
   }
 
-  // Fallback ONLY if Supabase is not configured
+  if (isSupabaseConfigured) {
+    // If Supabase is configured, it is the authoritative SINGLE SOURCE OF TRUTH.
+    // Never fall back to demo/sample products.
+    return {
+      brand: fallbackBrand,
+      categories: dataRepository.getCategoriesByBrand(brandId),
+      allItems: [],
+      featuredProducts: [],
+      heroOfferItems: [],
+      specializedServices: [],
+      dailyStatuses: dataRepository.getActiveDailyStatusesForBrand(brandId),
+    };
+  }
+
+  // Fallback ONLY if Supabase is completely unconfigured
   const allItems = dataRepository.getCatalogItems(brandId);
   return {
     brand: fallbackBrand,

@@ -643,6 +643,11 @@ export default function AdminOrdersPage() {
                         <div className="text-[11px] text-slate-400">
                           Qty: {item.quantity} × {formatPrice(item.unitPrice)}
                         </div>
+                        {item.originalPrice && item.originalPrice > item.unitPrice && (
+                          <div className="text-[10px] text-emerald-400">
+                            MRP: {formatPrice(item.originalPrice)} each · Savings: {formatPrice((item.originalPrice - item.unitPrice) * item.quantity)}
+                          </div>
+                        )}
                       </div>
                       <div className="font-extrabold text-white text-sm">
                         {formatPrice(item.lineTotal)}
@@ -654,12 +659,12 @@ export default function AdminOrdersPage() {
                 {/* Totals */}
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                   <div className="flex justify-between text-slate-400">
-                    <span>Subtotal:</span>
+                    <span>Subtotal / MRP:</span>
                     <span className="text-white font-semibold">{formatPrice(selectedOrder.subtotal)}</span>
                   </div>
                   {selectedOrder.savings > 0 && (
                     <div className="flex justify-between text-emerald-400">
-                      <span>Discount / Savings:</span>
+                      <span>Savings:</span>
                       <span>-{formatPrice(selectedOrder.savings)}</span>
                     </div>
                   )}

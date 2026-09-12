@@ -50,9 +50,11 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
   const removeItem = useCartStore((state) => state.removeItem);
   const clearCart = useCartStore((state) => state.clearCart);
   const getSubtotal = useCartStore((state) => state.getSubtotal);
+  const getOriginalTotal = useCartStore((state) => state.getOriginalTotal);
   const getSavings = useCartStore((state) => state.getSavings);
 
-  const subtotal = getSubtotal(brand.id);
+  const payableTotal = getSubtotal(brand.id);
+  const originalSubtotal = getOriginalTotal(brand.id);
   const savings = getSavings(brand.id);
 
   if (!isOpen) return null;
@@ -392,8 +394,8 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
             <div className="p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 space-y-3">
               <div className="space-y-1.5 text-xs">
                 <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                  <span>Subtotal</span>
-                  <span className="font-semibold text-slate-950 dark:text-white">{formatPrice(subtotal)}</span>
+                  <span>Subtotal / MRP Value</span>
+                  <span className="font-semibold text-slate-950 dark:text-white">{formatPrice(originalSubtotal)}</span>
                 </div>
                 {savings > 0 && (
                   <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-medium">
@@ -405,7 +407,7 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
                 )}
                 <div className="flex justify-between text-sm font-black text-slate-950 dark:text-white pt-1.5 border-t border-slate-200 dark:border-slate-800">
                   <span>Total Amount</span>
-                  <span className="text-base text-cyan-700 dark:text-cyan-400">{formatPrice(subtotal)}</span>
+                  <span className="text-base text-cyan-700 dark:text-cyan-400">{formatPrice(payableTotal)}</span>
                 </div>
               </div>
 

@@ -2386,8 +2386,13 @@ export default function AdminDashboardPage() {
               {/* Image Management */}
               <div className="space-y-3 p-4 rounded-2xl bg-slate-950/60 border border-slate-800">
                 <div className="flex items-center justify-between">
-                  <label className="font-bold uppercase text-slate-300">Item Gallery Images</label>
-                  <label className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs cursor-pointer flex items-center gap-1.5 transition-colors">
+                  <div>
+                    <label className="font-bold uppercase text-slate-300 block">Item Gallery Images</label>
+                    <p className="text-[11px] text-amber-300/90 font-medium mt-0.5">
+                      Use a direct public image URL, or upload the image. Google search-page URLs may not work.
+                    </p>
+                  </div>
+                  <label className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs cursor-pointer flex items-center gap-1.5 transition-colors shrink-0">
                     <UploadCloud className="w-3.5 h-3.5" />
                     <span>{isUploading ? 'Uploading...' : 'Upload Image File'}</span>
                     <input
@@ -2400,30 +2405,57 @@ export default function AdminDashboardPage() {
                   </label>
                 </div>
 
-                {formImages.map((img, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={img.url}
-                      onChange={(e) => {
-                        const updated = [...formImages];
-                        updated[idx].url = e.target.value;
-                        setFormImages(updated);
-                      }}
-                      placeholder="Image URL https://..."
-                      className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white font-mono text-xs"
-                    />
-                    {formImages.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setFormImages(formImages.filter((_, i) => i !== idx))}
-                        className="p-2.5 text-red-400 hover:text-red-300 rounded-xl bg-slate-950 border border-slate-800"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                {formImages.map((img, idx) => {
+                  const sanitizeUrl = (raw: string) => {
+                    const trimmed = raw.trim();
+                    try {
+                      if (trimmed.includes('google.') && (trimmed.includes('/imgres') || trimmed.includes('imgurl='))) {
+                        const parsed = new URL(trimmed);
+                        const direct = parsed.searchParams.get('imgurl');
+                        if (direct) return decodeURIComponent(direct);
+                      }
+                    } catch {}
+                    return trimmed;
+                  };
+
+                  return (
+                    <div key={idx} className="flex items-center gap-2">
+                      {img.url.trim() ? (
+                        <div className="w-9 h-9 rounded-lg overflow-hidden bg-slate-900 shrink-0 relative border border-slate-700 flex items-center justify-center">
+                          <img
+                            src={img.url}
+                            alt="Preview"
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLElement).classList.add('hidden');
+                            }}
+                          />
+                          <ImageIcon className="w-4 h-4 text-slate-500 absolute pointer-events-none -z-0" />
+                        </div>
+                      ) : null}
+                      <input
+                        type="text"
+                        value={img.url}
+                        onChange={(e) => {
+                          const updated = [...formImages];
+                          updated[idx].url = sanitizeUrl(e.target.value);
+                          setFormImages(updated);
+                        }}
+                        placeholder="Image URL https://..."
+                        className="flex-1 bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white font-mono text-xs"
+                      />
+                      {formImages.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setFormImages(formImages.filter((_, i) => i !== idx))}
+                          className="p-2.5 text-red-400 hover:text-red-300 rounded-xl bg-slate-950 border border-slate-800 shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Feature Toggles */}

@@ -142,36 +142,44 @@ export default async function BrandHomePage({ params }: BrandHomePageProps) {
         </div>
       </section>
 
-      {/* 3. Featured Products / Best Sellers */}
-      {featuredProducts.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20 w-full">
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">
-                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Featured Catalog</span>
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Popular in <span className={theme.sectionAccent}>{brand.name}</span>
-              </h2>
+      {/* 3. All Products & Storefront Catalog */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20 w-full" id="all-products">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+              <Sparkles className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
+              <span>Complete Catalog</span>
             </div>
-
-            <Link
-              href={`/${brand.id}/catalog?type=PRODUCT`}
-              className="inline-flex items-center gap-1.5 text-xs font-black text-slate-300 hover:text-white group"
-            >
-              <span>View Full Selection</span>
-              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </Link>
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+              All Products in <span className={theme.sectionAccent}>{brand.name}</span>
+            </h2>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {featuredProducts.map((item) => (
+          <Link
+            href={`/${brand.id}/catalog`}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-white group"
+          >
+            <span>Filter & Search Catalog</span>
+            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </Link>
+        </div>
+
+        {allItems.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
+            {allItems.map((item) => (
               <ProductCard key={item.id} item={item} brand={brand} />
             ))}
           </div>
-        </section>
-      )}
+        ) : (
+          <div className="p-12 rounded-3xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-center space-y-3 shadow-sm">
+            <ShoppingBag className="w-12 h-12 text-slate-400 mx-auto stroke-1" />
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white">No products available right now</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+              Our inventory for {brand.name} is currently being refreshed. Please check back shortly or chat with us directly on WhatsApp!
+            </p>
+          </div>
+        )}
+      </section>
 
       {/* 4. Specialized Services Section (Setup, Maintenance, Fixing) */}
       {specializedServices.length > 0 && (

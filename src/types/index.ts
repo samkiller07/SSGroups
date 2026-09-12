@@ -180,6 +180,8 @@ export interface OrderItem {
   unitValue: number;
   unitPrice: number;
   lineTotal: number;
+  originalPrice?: number;
+  savings?: number;
   createdAt?: string;
 }
 

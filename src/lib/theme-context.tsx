@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-type ThemeMode = 'dark' | 'light' | 'system';
+type ThemeMode = 'dark' | 'light';
 type ResolvedTheme = 'dark' | 'light';
 
 interface ThemeContextType {
@@ -13,27 +13,31 @@ interface ThemeContextType {
 }
 
 const ThemeContext = createContext<ThemeContextType>({
-  theme: 'dark',
-  resolvedTheme: 'dark',
+  theme: 'light',
+  resolvedTheme: 'light',
   setTheme: () => {},
   toggleTheme: () => {},
 });
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setThemeState] = useState<ThemeMode>('dark');
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>('dark');
+  const [theme, setThemeState] = useState<ThemeMode>('light');
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>('light');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem('ss_theme_mode') as ThemeMode | null;
-      if (saved && ['dark', 'light', 'system'].includes(saved)) {
+      if (saved === 'dark' || saved === 'light') {
         setThemeState(saved);
+        setResolvedTheme(saved);
       } else {
-        setThemeState('dark'); // default rich dark mode
+        // DEFAULT IS STRICTLY LIGHT MODE FOR NEW USERS
+        setThemeState('light');
+        setResolvedTheme('light');
       }
     } catch {
-      setThemeState('dark');
+      setThemeState('light');
+      setResolvedTheme('light');
     }
     setMounted(true);
   }, []);
@@ -42,41 +46,22 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!mounted) return;
 
     const root = document.documentElement;
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    setResolvedTheme(theme);
 
-    const applyTheme = () => {
-      let active: ResolvedTheme = 'dark';
-      if (theme === 'system') {
-        active = mediaQuery.matches ? 'dark' : 'light';
-      } else {
-        active = theme;
-      }
-
-      setResolvedTheme(active);
-
-      if (active === 'dark') {
-        root.classList.add('dark');
-        root.classList.remove('light');
-        root.setAttribute('data-theme', 'dark');
-      } else {
-        root.classList.add('light');
-        root.classList.remove('dark');
-        root.setAttribute('data-theme', 'light');
-      }
-    };
-
-    applyTheme();
-
-    const listener = () => {
-      if (theme === 'system') applyTheme();
-    };
-
-    mediaQuery.addEventListener('change', listener);
-    return () => mediaQuery.removeEventListener('change', listener);
+    if (theme === 'dark') {
+      root.classList.add('dark');
+      root.classList.remove('light');
+      root.setAttribute('data-theme', 'dark');
+    } else {
+      root.classList.add('light');
+      root.classList.remove('dark');
+      root.setAttribute('data-theme', 'light');
+    }
   }, [theme, mounted]);
 
   const setTheme = (newTheme: ThemeMode) => {
     setThemeState(newTheme);
+    setResolvedTheme(newTheme);
     try {
       localStorage.setItem('ss_theme_mode', newTheme);
     } catch {

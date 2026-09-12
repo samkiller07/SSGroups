@@ -154,12 +154,12 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
             <td style="width: 45%;">
               <table width="100%" border="0" cellspacing="0" cellpadding="0">
                 <tr>
-                  <td style="padding: 4px 0; font-size: 13px; color: #64748b;">Subtotal:</td>
+                  <td style="padding: 4px 0; font-size: 13px; color: #64748b;">Subtotal / MRP:</td>
                   <td style="padding: 4px 0; font-size: 13px; color: #1e293b; text-align: right; font-weight: 600;">₹${Number(order.subtotal).toLocaleString('en-IN')}</td>
                 </tr>
                 ${order.savings > 0 ? `
                 <tr>
-                  <td style="padding: 4px 0; font-size: 13px; color: #16a34a;">Savings / Discount:</td>
+                  <td style="padding: 4px 0; font-size: 13px; color: #16a34a;">Savings:</td>
                   <td style="padding: 4px 0; font-size: 13px; color: #16a34a; text-align: right; font-weight: 600;">-₹${Number(order.savings).toLocaleString('en-IN')}</td>
                 </tr>
                 ` : ''}
@@ -178,22 +178,16 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
           <div style="font-size: 13px; color: #334155; line-height: 1.5;">
             📍 ${escapeHtml(brand.address)}<br/>
             ⏰ Hours: ${escapeHtml(brand.openingTime)} – ${escapeHtml(brand.closingTime)} (${escapeHtml(brand.holiday)})<br/>
-            📞 Direct: +91 ${escapeHtml(brand.phonePrimary)} | WhatsApp: +91 ${escapeHtml(brand.whatsappNumber)}
+            📞 Phone: +91 ${escapeHtml(brand.phonePrimary)} | WhatsApp: +91 ${escapeHtml(brand.whatsappNumber)}
           </div>
         </div>
 
-      </td>
-    </tr>
+        <!-- Footer Notice -->
+        <p style="margin: 0; font-size: 12px; color: #94a3b8; text-align: center; line-height: 1.5;">
+          This is an official automated confirmation receipt for invoice <strong>${escapeHtml(order.invoiceNumber)}</strong>.<br/>
+          Please retain this email for pickup or warranty reference.
+        </p>
 
-    <!-- Footer -->
-    <tr>
-      <td style="padding: 20px 28px; background-color: #0f172a; text-align: center; color: #94a3b8; font-size: 12px; border-top: 1px solid #1e293b;">
-        <p style="margin: 0 0 6px 0; color: #cbd5e1; font-weight: 600;">
-          SS Multi-Brand Platform — Coimbatore
-        </p>
-        <p style="margin: 0; font-size: 11px; color: #64748b;">
-          This is an automated confirmation receipt generated for Invoice ${escapeHtml(order.invoiceNumber)}. Please retain for your records.
-        </p>
       </td>
     </tr>
 
@@ -209,8 +203,11 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
 export function generateOrderConfirmationEmailText(order: Order, brand: BrandConfig): string {
   const items = order.items || [];
   const itemsList = items
-    .map((i) => `* ${i.productName} (Qty: ${i.quantity}, ${i.unitType}) — Rs. ${Number(i.lineTotal).toLocaleString('en-IN')}`)
-    .join('\n');
+    .map(
+      (i) =>
+        `* ${i.productName}\n   Qty: ${i.quantity} × Rs. ${Number(i.unitPrice).toLocaleString('en-IN')} = Rs. ${Number(i.lineTotal).toLocaleString('en-IN')}`
+    )
+    .join('\n\n');
 
   return `
 ORDER CONFIRMATION — ${order.invoiceNumber}
@@ -233,9 +230,8 @@ ITEMS ORDERED:
 ${itemsList}
 
 PAYMENT SUMMARY:
-- Subtotal: Rs. ${Number(order.subtotal).toLocaleString('en-IN')}
-- Savings: Rs. ${Number(order.savings).toLocaleString('en-IN')}
-- Total Amount: Rs. ${Number(order.totalAmount).toLocaleString('en-IN')}
+- Subtotal / MRP: Rs. ${Number(order.subtotal).toLocaleString('en-IN')}
+${order.savings > 0 ? `- Savings: -Rs. ${Number(order.savings).toLocaleString('en-IN')}\n` : ''}- Total Amount: Rs. ${Number(order.totalAmount).toLocaleString('en-IN')}
 
 STORE INFORMATION:
 ${brand.name}
