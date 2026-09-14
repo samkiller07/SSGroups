@@ -34,36 +34,26 @@ export async function adminLoginAction(formData: FormData) {
     };
   }
 
-  // Server-side authoritative credential validation
-  const validAdminEmail = process.env.ADMIN_EMAIL || 'admin@ssmultibrand.com';
-  const validAdminPassword = process.env.ADMIN_PASSWORD || 'SSCoimbatore2026!';
+  // Server-side authoritative credential validation (Fail closed if environment variables are missing)
+  const validAdminEmail = process.env.ADMIN_EMAIL;
+  const validAdminPassword = process.env.ADMIN_PASSWORD;
 
-  if (isSupabaseConfigured) {
-    const supabase = getSupabaseServer();
-    if (supabase) {
-      const { data: adminUser } = await supabase
-        .from('admin_users')
-        .select('*')
-        .eq('email', email.trim().toLowerCase())
-        .single();
-
-      if (adminUser) {
-        if (password === validAdminPassword || password === 'SSCoimbatore2026!') {
-          await createAdminSession(email);
-          return { success: true };
-        }
-      }
-    }
+  if (!validAdminEmail || !validAdminPassword) {
+    console.error('[CRITICAL SECURITY] ADMIN_EMAIL or ADMIN_PASSWORD is not configured in server environment variables.');
+    return {
+      success: false,
+      error: 'Authentication configuration error. Please contact system administrator.',
+    };
   }
 
-  if (email.trim().toLowerCase() === validAdminEmail.toLowerCase() && password === validAdminPassword) {
-    await createAdminSession(email);
+  if (email.trim().toLowerCase() === validAdminEmail.trim().toLowerCase() && password === validAdminPassword) {
+    await createAdminSession(email.trim().toLowerCase());
     return { success: true };
   }
 
   return {
     success: false,
-    error: 'Invalid admin credentials. Please check your credentials or contact administrator.',
+    error: 'Invalid admin credentials. Please check your email and password.',
   };
 }
 

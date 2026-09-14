@@ -1,9 +1,16 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.ADMIN_SECRET_KEY || 'ss_production_master_secret_2026_super_secure_key_9791719662'
-);
+function getSecretKey(): Uint8Array {
+  const secret = process.env.ADMIN_SECRET_KEY;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[CRITICAL SECURITY] ADMIN_SECRET_KEY is missing in production environment.');
+    }
+    return new TextEncoder().encode(secret || 'ss_development_fallback_secret_key_2026_local_only');
+  }
+  return new TextEncoder().encode(secret);
+}
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -19,7 +26,7 @@ export async function middleware(request: NextRequest) {
     }
 
     try {
-      const { payload } = await jwtVerify(token, SECRET_KEY);
+      const { payload } = await jwtVerify(token, getSecretKey());
       if (payload.role !== 'admin') {
         return NextResponse.redirect(new URL('/admin?error=unauthorized', request.url));
       }

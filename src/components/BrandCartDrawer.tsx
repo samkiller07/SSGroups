@@ -26,7 +26,10 @@ import {
   User,
   Phone,
   Mail,
-  FileText
+  FileText,
+  MapPin,
+  Home,
+  Building
 } from 'lucide-react';
 
 interface BrandCartDrawerProps {
@@ -40,6 +43,15 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>('PICKUP');
+  
+  // Delivery address fields (Required for DELIVERY)
+  const [houseNo, setHouseNo] = useState('');
+  const [streetArea, setStreetArea] = useState('');
+  const [landmark, setLandmark] = useState('');
+  const [city, setCity] = useState(brand.city || 'Coimbatore');
+  const [pincode, setPincode] = useState('');
+  const [deliveryNote, setDeliveryNote] = useState('');
+  
   const [customerNote, setCustomerNote] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -75,6 +87,25 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
       return;
     }
 
+    if (deliveryMethod === 'DELIVERY') {
+      if (!houseNo.trim()) {
+        setErrorMessage('Please enter your House / Door Number for doorstep delivery.');
+        return;
+      }
+      if (!streetArea.trim()) {
+        setErrorMessage('Please enter your Street / Area name for doorstep delivery.');
+        return;
+      }
+      if (!city.trim()) {
+        setErrorMessage('Please enter your City for doorstep delivery.');
+        return;
+      }
+      if (!pincode.trim() || !/^[1-9][0-9]{5}$/.test(pincode.trim())) {
+        setErrorMessage('Please enter a valid 6-digit postal pincode (e.g. 641012).');
+        return;
+      }
+    }
+
     setIsVerifying(true);
     setErrorMessage('');
 
@@ -91,6 +122,12 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
         customerPhone: customerPhone.trim(),
         customerEmail: customerEmail.trim(),
         deliveryMethod,
+        houseNo: deliveryMethod === 'DELIVERY' ? houseNo.trim() : undefined,
+        streetArea: deliveryMethod === 'DELIVERY' ? streetArea.trim() : undefined,
+        landmark: deliveryMethod === 'DELIVERY' ? landmark.trim() : undefined,
+        city: deliveryMethod === 'DELIVERY' ? city.trim() : undefined,
+        pincode: deliveryMethod === 'DELIVERY' ? pincode.trim() : undefined,
+        deliveryNote: deliveryMethod === 'DELIVERY' ? deliveryNote.trim() : undefined,
         customerNote: customerNote.trim() || undefined,
         items: payload,
       });
@@ -337,18 +374,102 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
                         <Truck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                         <span>Doorstep Delivery</span>
                       </div>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">Free within ~2km</p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">Delivery to address</p>
                     </button>
                   </div>
                 </div>
 
-                {/* Optional Note */}
+                {/* Delivery Address Section (Required when Doorstep Delivery is selected) */}
+                {deliveryMethod === 'DELIVERY' && (
+                  <div className="pt-3 border-t border-slate-200 dark:border-slate-850 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5" />
+                        <span>Delivery Address <span className="text-red-500">*</span></span>
+                      </label>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-800 dark:text-amber-300 leading-snug">
+                      Delivery charge will be confirmed based on your delivery location.
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Home className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                        <input
+                          type="text"
+                          value={houseNo}
+                          onChange={(e) => setHouseNo(e.target.value)}
+                          placeholder="House / Flat / Door No *"
+                          className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                          required
+                        />
+                      </div>
+
+                      <div className="relative">
+                        <MapPin className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                        <input
+                          type="text"
+                          value={streetArea}
+                          onChange={(e) => setStreetArea(e.target.value)}
+                          placeholder="Street / Area / Colony *"
+                          className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                          required
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="relative">
+                          <Building className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                          <input
+                            type="text"
+                            value={city}
+                            onChange={(e) => setCity(e.target.value)}
+                            placeholder="City *"
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                            required
+                          />
+                        </div>
+
+                        <div className="relative">
+                          <input
+                            type="text"
+                            maxLength={6}
+                            value={pincode}
+                            onChange={(e) => setPincode(e.target.value.replace(/\D/g, ''))}
+                            placeholder="Pincode (6-digit) *"
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <input
+                        type="text"
+                        value={landmark}
+                        onChange={(e) => setLandmark(e.target.value)}
+                        placeholder="Landmark (Optional)"
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                      />
+
+                      <input
+                        type="text"
+                        value={deliveryNote}
+                        onChange={(e) => setDeliveryNote(e.target.value)}
+                        placeholder="Delivery instructions (e.g. Call before delivery)"
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Optional Customer Note */}
                 <div className="pt-2">
                   <input
                     type="text"
                     value={customerNote}
                     onChange={(e) => setCustomerNote(e.target.value)}
-                    placeholder="Optional delivery instructions or notes..."
+                    placeholder="General order notes..."
                     className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
                   />
                 </div>

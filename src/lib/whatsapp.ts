@@ -38,8 +38,13 @@ export function generateCartWhatsAppUrl(
     message += `*Total Savings: ${formatPrice(totalSavings)}*\n`;
   }
   message += `--------------------------------\n`;
-  message += `*Fulfillment Preference:* ${deliveryMethod === 'DELIVERY' || (deliveryMethod as string) === 'HOME_DELIVERY' ? 'Doorstep Delivery' : 'Shop Pickup'}\n`;
-  message += `*Location:* Coimbatore (~${brand.freeDeliveryRadiusKm}km coverage)\n`;
+  const isDelivery = deliveryMethod === 'DELIVERY' || (deliveryMethod as string) === 'HOME_DELIVERY';
+  message += `*Fulfillment Preference:* ${isDelivery ? 'Doorstep Delivery' : 'Shop Pickup'}\n`;
+  if (isDelivery) {
+    message += `*Location:* Coimbatore (Delivery charge will be confirmed based on location)\n`;
+  } else {
+    message += `*Location:* ${brand.city || 'Coimbatore'} (Store Pickup)\n`;
+  }
 
   if (customerNote && customerNote.trim().length > 0) {
     message += `*Special Instructions:* ${customerNote.trim()}\n`;

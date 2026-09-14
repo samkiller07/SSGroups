@@ -3,16 +3,25 @@ import { cookies } from 'next/headers';
 import { AuthSession } from '@/types';
 
 const ADMIN_COOKIE_NAME = 'ss_admin_session';
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.ADMIN_SECRET_KEY || 'ss_production_master_secret_2026_super_secure_key_9791719662'
-);
+
+function getSecretKey(): Uint8Array {
+  const secret = process.env.ADMIN_SECRET_KEY;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[CRITICAL SECURITY] ADMIN_SECRET_KEY is missing in production environment.');
+    }
+    return new TextEncoder().encode(secret || 'ss_development_fallback_secret_key_2026_local_only');
+  }
+  return new TextEncoder().encode(secret);
+}
 
 export async function createAdminSession(email: string): Promise<string> {
+  const secretKey = getSecretKey();
   const token = await new SignJWT({ email, role: 'admin' })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('24h')
-    .sign(SECRET_KEY);
+    .sign(secretKey);
 
   try {
     const cookieStore = await cookies();
@@ -31,22 +40,14 @@ export async function createAdminSession(email: string): Promise<string> {
 }
 
 export async function verifyAdminSession(): Promise<AuthSession | null> {
-  if (process.env.TEST_ADMIN_AUTH === 'true') {
-    return {
-      email: 'admin@ssmultibrand.com',
-      role: 'admin',
-      iat: Date.now(),
-      exp: Date.now() + 86400000,
-    };
-  }
-
   try {
     const cookieStore = await cookies();
     const token = cookieStore.get(ADMIN_COOKIE_NAME)?.value;
 
     if (!token) return null;
 
-    const { payload } = await jwtVerify(token, SECRET_KEY);
+    const secretKey = getSecretKey();
+    const { payload } = await jwtVerify(token, secretKey);
 
     if (payload.role !== 'admin' || !payload.email) {
       return null;

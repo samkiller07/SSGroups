@@ -17,9 +17,13 @@ export const supabasePublic = isSupabaseConfigured
 
 // Server-side Admin Supabase Client (Service Role for Server Actions)
 export const getSupabaseServer = () => {
-  if (!isSupabaseConfigured) return null;
-  const key = supabaseServiceRoleKey || supabaseAnonKey;
-  return createClient(supabaseUrl, key, {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[Supabase Server] SUPABASE_SERVICE_ROLE_KEY is not configured. Server-side privileged operations will fail closed.');
+    }
+    return null;
+  }
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,

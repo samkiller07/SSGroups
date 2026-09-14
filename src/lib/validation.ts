@@ -144,11 +144,7 @@ export const customerCheckoutSchema = z
       .max(16, 'Phone number is too long')
       .regex(/^\+?[0-9\s-]{10,16}$/, 'Enter a valid Indian phone number (e.g. 9791719662 or +91 97917 19662)'),
     customerEmail: z.string().email('Enter a valid email address for confirmation and invoice delivery'),
-    deliveryMethod: z.enum(['PICKUP', 'DELIVERY', 'HOME_DELIVERY', 'SHOP_PICKUP']).transform((v) => {
-      if (v === 'HOME_DELIVERY') return 'DELIVERY';
-      if (v === 'SHOP_PICKUP') return 'PICKUP';
-      return v as 'PICKUP' | 'DELIVERY';
-    }),
+    deliveryMethod: z.enum(['PICKUP', 'DELIVERY']),
     houseNo: z.string().max(100).optional().nullable(),
     streetArea: z.string().max(200).optional().nullable(),
     landmark: z.string().max(200).optional().nullable(),
