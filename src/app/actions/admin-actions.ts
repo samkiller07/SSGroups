@@ -458,7 +458,7 @@ export async function getAdminCatalogAction(brandId: string) {
     return {
       success: true,
       items: [],
-      categories: dataRepository.getAllCategoriesForAdmin(brandId),
+      categories: [],
       statuses: [],
       brand: dataRepository.getBrand(brandId),
     };
@@ -487,7 +487,7 @@ export async function getPublicCatalogAction(brandId: string) {
       return {
         success: true,
         items: [],
-        categories: dataRepository.getCategoriesByBrand(brandId),
+        categories: [],
       };
     }
     return {
@@ -865,16 +865,17 @@ export async function createCustomerOrderAction(rawInput: unknown) {
           .from('catalog_items')
           .select('*, images:product_images(*)')
           .eq('id', clientItem.catalogItemId)
+          .eq('is_active', true)
           .maybeSingle();
         if (dbItem) {
           serverItem = mapDbCatalogItemToItem(dbItem);
         }
       }
-    }
-    if (!serverItem) {
+    } else {
       serverItem = dataRepository.getItemById(clientItem.catalogItemId) || null;
     }
-    if (!serverItem) {
+
+    if (!serverItem || !serverItem.isActive) {
       return {
         success: false,
         error: `Item not found or removed from catalog: ${clientItem.catalogItemId}`,
@@ -1181,7 +1182,7 @@ export async function updateOrderDeliveryChargeAction(rawInput: { orderId: strin
     const finalTotal = productsTotal + deliveryCharge;
     const now = new Date().toISOString();
 
-    let { error: updateErr } = await supabase
+    let { data: updatedRows, error: updateErr } = await supabase
       .from('orders')
       .update({
         delivery_charge: deliveryCharge,
@@ -1189,16 +1190,17 @@ export async function updateOrderDeliveryChargeAction(rawInput: { orderId: strin
         delivery_charge_set_by: session.email || 'admin',
         delivery_charge_updated_at: now,
       })
-      .eq('id', orderId);
-
-    if (updateErr && (updateErr.code === '42703' || updateErr.code === 'PGRST204' || updateErr.message?.includes('delivery_charge'))) {
-      console.warn('[updateOrderDeliveryChargeAction] delivery_charge column not yet migrated in Supabase table. Using memory fallback.');
-      updateErr = null;
-    }
+      .eq('id', orderId)
+      .eq('status', 'PENDING')
+      .select('*, items:order_items(*)');
 
     if (updateErr) {
       console.error('[updateOrderDeliveryChargeAction] Supabase update failed:', updateErr);
       return { success: false, error: 'Failed to update delivery charge: ' + updateErr.message };
+    }
+
+    if (!updatedRows || updatedRows.length === 0) {
+      return { success: false, error: 'Order is no longer in PENDING status. Delivery charge and final total are immutable.' };
     }
 
     const { data: refreshedRow } = await supabase
@@ -1326,7 +1328,29 @@ export async function confirmAdminOrderAction(orderId: string) {
       }
     }
 
-    // 3. Atomically deduct stock and update order status
+    // 3. Atomically transition order status via Optimistic Concurrency Control (OCC)
+    const confirmedAt = new Date().toISOString();
+    const { data: confirmedRows, error: updateErr } = await supabase
+      .from('orders')
+      .update({
+        status: 'CONFIRMED',
+        confirmed_at: confirmedAt,
+        delivery_charge: deliveryCharge,
+        final_total: finalTotal,
+      })
+      .eq('id', orderId)
+      .eq('status', 'PENDING')
+      .select('*, items:order_items(*)');
+
+    if (updateErr) {
+      return { success: false, error: 'Failed to update order status: ' + updateErr.message };
+    }
+
+    if (!confirmedRows || confirmedRows.length === 0) {
+      return { success: false, error: 'Order is no longer PENDING (already confirmed or cancelled).' };
+    }
+
+    // 4. Atomically deduct stock with conditional concurrency check (.gte)
     for (const item of items) {
       if (item.catalog_item_id) {
         const { data: catItem } = await supabase
@@ -1337,56 +1361,40 @@ export async function confirmAdminOrderAction(orderId: string) {
 
         if (catItem && catItem.stock_quantity !== null) {
           const newStock = Math.max(0, catItem.stock_quantity - item.quantity);
-          await supabase
+          const isAvail = newStock > 0;
+
+          // Atomic conditional update: only update if stock_quantity is still >= requested quantity
+          const { data: stockUpdated, error: stockErr } = await supabase
             .from('catalog_items')
-            .update({ stock_quantity: newStock, updated_at: new Date().toISOString() })
-            .eq('id', item.catalog_item_id);
+            .update({
+              stock_quantity: newStock,
+              is_available: isAvail,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', item.catalog_item_id)
+            .gte('stock_quantity', item.quantity)
+            .select();
+
+          if (stockErr || !stockUpdated || stockUpdated.length === 0) {
+            // Rollback order back to PENDING if stock was claimed concurrently by another worker
+            await supabase.from('orders').update({ status: 'PENDING', confirmed_at: null }).eq('id', orderId);
+            return {
+              success: false,
+              error: `Insufficient stock for "${item.product_name}". Stock was claimed by a concurrent order confirmation.`,
+            };
+          }
         }
       }
     }
 
-    const confirmedAt = new Date().toISOString();
-    let { error: updateErr } = await supabase
-      .from('orders')
-      .update({
-        status: 'CONFIRMED',
-        confirmed_at: confirmedAt,
-        delivery_charge: deliveryCharge,
-        final_total: finalTotal,
-      })
-      .eq('id', orderId);
-
-    if (updateErr && (updateErr.code === '42703' || updateErr.code === 'PGRST204' || updateErr.message?.includes('delivery_charge'))) {
-      const retryRes = await supabase
-        .from('orders')
-        .update({
-          status: 'CONFIRMED',
-          confirmed_at: confirmedAt,
-        })
-        .eq('id', orderId);
-      updateErr = retryRes.error;
-    }
-
-    if (updateErr) {
-      return { success: false, error: 'Failed to update order status: ' + updateErr.message };
-    }
-
-    // Fetch refreshed order
-    const { data: updatedRow } = await supabase
-      .from('orders')
-      .select('*, items:order_items(*)')
-      .eq('id', orderId)
-      .single();
-
     confirmedOrder = mapDbOrderToOrder({
-      ...(updatedRow || orderRow),
+      ...confirmedRows[0],
       status: 'CONFIRMED',
       confirmed_at: confirmedAt,
       delivery_charge: deliveryCharge,
       final_total: finalTotal,
     });
 
-    // Mirror to in-memory store
     dataRepository.confirmOrderAndDeductStock(orderId);
   } else {
     // In-memory fallback
@@ -1400,7 +1408,7 @@ export async function confirmAdminOrderAction(orderId: string) {
     confirmedOrder = confirmResult.order;
   }
 
-  // 4. Send branded confirmation email
+  // 5. Send branded confirmation email
   let emailSent = false;
   let emailError: string | null = null;
 
@@ -1473,8 +1481,9 @@ export async function confirmAdminOrderAction(orderId: string) {
 /**
  * Admin Cancel Order Action:
  * 1. Requires Admin Authentication
- * 2. Transitions PENDING -> CANCELLED in Supabase
- * 3. Stock is UNTOUCHED
+ * 2. Enforces state machine: only PENDING -> CANCELLED allowed
+ * 3. Rejects CONFIRMED -> CANCELLED or CANCELLED -> CANCELLED
+ * 4. Stock remains UNTOUCHED
  */
 export async function cancelAdminOrderAction(orderId: string) {
   await requireAdminAuth();
@@ -1509,45 +1518,30 @@ export async function cancelAdminOrderAction(orderId: string) {
       return { success: false, error: 'Confirmed orders cannot be cancelled directly.' };
     }
 
-    let rpcDone = false;
-    try {
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('cancel_order_safe', {
-        p_order_id: orderId,
-      });
-      if (!rpcErr && rpcRes && rpcRes.success) {
-        rpcDone = true;
-      }
-    } catch {
-      rpcDone = false;
+    if (orderRow.status !== 'PENDING') {
+      return { success: false, error: `Order is in ${orderRow.status} status and cannot be cancelled.` };
     }
 
-    if (!rpcDone) {
-      const cancelledAt = new Date().toISOString();
-      const { error: cancelErr } = await supabase
-        .from('orders')
-        .update({
-          status: 'CANCELLED',
-          cancelled_at: cancelledAt,
-        })
-        .eq('id', orderId);
-
-      if (cancelErr) {
-        return { success: false, error: 'Failed to cancel order: ' + cancelErr.message };
-      }
-    }
-
-    const { data: updatedRow } = await supabase
+    const cancelledAt = new Date().toISOString();
+    const { data: cancelledRows, error: cancelErr } = await supabase
       .from('orders')
-      .select('*, items:order_items(*)')
+      .update({
+        status: 'CANCELLED',
+        cancelled_at: cancelledAt,
+      })
       .eq('id', orderId)
-      .single();
+      .eq('status', 'PENDING')
+      .select('*, items:order_items(*)');
 
-    cancelledOrder = updatedRow ? mapDbOrderToOrder(updatedRow) : mapDbOrderToOrder({
-      ...orderRow,
-      status: 'CANCELLED',
-      cancelled_at: new Date().toISOString(),
-    });
+    if (cancelErr) {
+      return { success: false, error: 'Failed to cancel order: ' + cancelErr.message };
+    }
 
+    if (!cancelledRows || cancelledRows.length === 0) {
+      return { success: false, error: 'Order is no longer PENDING (already confirmed or cancelled).' };
+    }
+
+    cancelledOrder = mapDbOrderToOrder(cancelledRows[0]);
     dataRepository.cancelOrder(orderId);
   } else {
     const cancelResult = dataRepository.cancelOrder(orderId);

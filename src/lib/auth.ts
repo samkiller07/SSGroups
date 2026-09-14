@@ -4,19 +4,21 @@ import { AuthSession } from '@/types';
 
 const ADMIN_COOKIE_NAME = 'ss_admin_session';
 
-function getSecretKey(): Uint8Array {
+function getSecretKey(): Uint8Array | null {
   const secret = process.env.ADMIN_SECRET_KEY;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error('[CRITICAL SECURITY] ADMIN_SECRET_KEY is missing in production environment.');
-    }
-    return new TextEncoder().encode(secret || 'ss_development_fallback_secret_key_2026_local_only');
+  if (!secret || secret.trim().length === 0) {
+    console.error('[CRITICAL SECURITY] ADMIN_SECRET_KEY is mandatory and missing from environment configuration.');
+    return null;
   }
-  return new TextEncoder().encode(secret);
+  return new TextEncoder().encode(secret.trim());
 }
 
 export async function createAdminSession(email: string): Promise<string> {
   const secretKey = getSecretKey();
+  if (!secretKey) {
+    throw new Error('CRITICAL SECURITY: Cannot create admin session because ADMIN_SECRET_KEY is not configured in server environment.');
+  }
+
   const token = await new SignJWT({ email, role: 'admin' })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
@@ -41,12 +43,16 @@ export async function createAdminSession(email: string): Promise<string> {
 
 export async function verifyAdminSession(): Promise<AuthSession | null> {
   try {
+    const secretKey = getSecretKey();
+    if (!secretKey) {
+      return null;
+    }
+
     const cookieStore = await cookies();
     const token = cookieStore.get(ADMIN_COOKIE_NAME)?.value;
 
     if (!token) return null;
 
-    const secretKey = getSecretKey();
     const { payload } = await jwtVerify(token, secretKey);
 
     if (payload.role !== 'admin' || !payload.email) {
