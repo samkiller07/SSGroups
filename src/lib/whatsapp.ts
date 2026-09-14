@@ -38,7 +38,7 @@ export function generateCartWhatsAppUrl(
     message += `*Total Savings: ${formatPrice(totalSavings)}*\n`;
   }
   message += `--------------------------------\n`;
-  message += `*Fulfillment Preference:* ${deliveryMethod === 'HOME_DELIVERY' ? 'Doorstep Delivery' : 'Shop Pickup'}\n`;
+  message += `*Fulfillment Preference:* ${deliveryMethod === 'DELIVERY' || (deliveryMethod as string) === 'HOME_DELIVERY' ? 'Doorstep Delivery' : 'Shop Pickup'}\n`;
   message += `*Location:* Coimbatore (~${brand.freeDeliveryRadiusKm}km coverage)\n`;
 
   if (customerNote && customerNote.trim().length > 0) {
@@ -54,16 +54,37 @@ export function generateOrderWhatsAppUrl(brand: BrandConfig, order: import('@/ty
   const cleanPhone = brand.whatsappNumber.replace(/\D/g, '');
   const targetPhone = cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`;
 
+  const isDelivery = order.deliveryMethod === 'DELIVERY' || (order.deliveryMethod as string) === 'HOME_DELIVERY';
+  const isConfirmed = order.status === 'CONFIRMED';
+
   let message = `*Order Request — ${order.invoiceNumber}*\n\n`;
+  if (isConfirmed) {
+    message = `*Order Confirmed — ${order.invoiceNumber}*\n\n`;
+  }
   message += `*Brand:* ${brand.name}\n\n`;
   message += `--------------------------------\n\n`;
   message += `*Customer:* ${order.customerName}\n`;
   message += `*Phone:* ${order.customerPhone}\n`;
   message += `*Email:* ${order.customerEmail}\n`;
-  message += `*Delivery:* ${order.deliveryMethod === 'HOME_DELIVERY' ? 'Doorstep Delivery' : 'Shop Pickup'}\n`;
+  message += `*Delivery:* ${isDelivery ? 'Doorstep Delivery' : 'Shop Pickup'}\n`;
 
-  if (order.customerNote) {
-    message += `*Note:* ${order.customerNote}\n`;
+  if (isDelivery && order.deliveryAddress) {
+    message += `\n*Delivery Address:*\n`;
+    message += `${order.deliveryAddress}\n`;
+    if (order.deliveryLandmark) {
+      message += `${order.deliveryLandmark}\n`;
+    }
+    if (order.deliveryCity) {
+      message += `${order.deliveryCity}\n`;
+    }
+    if (order.deliveryPincode) {
+      message += `${order.deliveryPincode}\n`;
+    }
+  }
+
+  const note = order.deliveryNote || order.customerNote;
+  if (note && note.trim().length > 0) {
+    message += `\n*Delivery Note:* ${note.trim()}\n`;
   }
 
   message += `\n--------------------------------\n\n`;
@@ -85,10 +106,34 @@ export function generateOrderWhatsAppUrl(brand: BrandConfig, order: import('@/ty
   if (order.savings > 0) {
     message += `*Savings:* -₹${Number(order.savings).toLocaleString('en-IN')}\n`;
   }
-  message += `*Total Amount:* ₹${Number(order.totalAmount).toLocaleString('en-IN')}\n\n`;
-  message += `*Status:* PENDING VERIFICATION\n\n`;
-  message += `--------------------------------\n\n`;
-  message += `Please confirm order availability and dispatch schedule.\nThank you!`;
+  message += `*Products Total:* ₹${Number(order.totalAmount).toLocaleString('en-IN')}\n`;
+
+  if (isDelivery) {
+    if (isConfirmed || (order.deliveryCharge !== null && order.deliveryCharge !== undefined)) {
+      message += `*Delivery Charge:* ₹${Number(order.deliveryCharge || 0).toLocaleString('en-IN')}\n`;
+      message += `*Grand Total:* ₹${Number(order.finalTotal || order.totalAmount + (order.deliveryCharge || 0)).toLocaleString('en-IN')}\n\n`;
+    } else {
+      message += `*Delivery Charge:* PENDING VERIFICATION\n`;
+      message += `*Final Amount:* TO BE CONFIRMED\n\n`;
+    }
+  } else {
+    message += `*Delivery Charge:* ₹0\n`;
+    message += `*Total Amount:* ₹${Number(order.totalAmount).toLocaleString('en-IN')}\n\n`;
+  }
+
+  if (isConfirmed) {
+    message += `*Status:* CONFIRMED\n\n`;
+    message += `--------------------------------\n\n`;
+    message += `Thank you for ordering with ${brand.name}!`;
+  } else {
+    message += `*Status:* PENDING VERIFICATION\n\n`;
+    message += `--------------------------------\n\n`;
+    if (isDelivery) {
+      message += `Please confirm order availability and delivery charges.\nThank you!`;
+    } else {
+      message += `Please confirm order availability and dispatch schedule.\nThank you!`;
+    }
+  }
 
   return `https://wa.me/${targetPhone}?text=${encodeURIComponent(message)}`;
 }

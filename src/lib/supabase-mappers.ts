@@ -50,6 +50,29 @@ export function mapDbCatalogItemToItem(row: any): CatalogItem {
 
 export function mapDbOrderToOrder(row: any): Order {
   const items = Array.isArray(row.items) ? row.items : [];
+  const rawMethod = String(row.delivery_method || 'PICKUP').toUpperCase();
+  const deliveryMethod: 'PICKUP' | 'DELIVERY' = (rawMethod === 'DELIVERY' || rawMethod === 'HOME_DELIVERY') ? 'DELIVERY' : 'PICKUP';
+
+  const subtotal = Number(row.subtotal || 0);
+  const totalAmount = Number(row.total_amount || 0);
+  const savings = Number(row.savings || 0);
+
+  let deliveryCharge: number | null = null;
+  if (row.delivery_charge !== null && row.delivery_charge !== undefined) {
+    deliveryCharge = Number(row.delivery_charge);
+  } else if (deliveryMethod === 'PICKUP') {
+    deliveryCharge = 0;
+  }
+
+  let finalTotal: number | undefined = undefined;
+  if (row.final_total !== null && row.final_total !== undefined) {
+    finalTotal = Number(row.final_total);
+  } else if (deliveryMethod === 'PICKUP') {
+    finalTotal = totalAmount;
+  } else if (deliveryCharge !== null) {
+    finalTotal = totalAmount + deliveryCharge;
+  }
+
   return {
     id: row.id,
     invoiceNumber: row.invoice_number,
@@ -57,11 +80,20 @@ export function mapDbOrderToOrder(row: any): Order {
     customerName: row.customer_name,
     customerPhone: row.customer_phone,
     customerEmail: row.customer_email,
-    deliveryMethod: row.delivery_method,
+    deliveryMethod,
+    deliveryAddress: row.delivery_address || undefined,
+    deliveryLandmark: row.delivery_landmark || undefined,
+    deliveryCity: row.delivery_city || undefined,
+    deliveryPincode: row.delivery_pincode || undefined,
+    deliveryNote: row.delivery_note || undefined,
     customerNote: row.customer_note || undefined,
-    subtotal: Number(row.subtotal),
-    savings: Number(row.savings || 0),
-    totalAmount: Number(row.total_amount),
+    subtotal,
+    savings,
+    totalAmount,
+    deliveryCharge,
+    finalTotal,
+    deliveryChargeSetBy: row.delivery_charge_set_by || undefined,
+    deliveryChargeUpdatedAt: row.delivery_charge_updated_at || undefined,
     status: row.status as OrderStatus,
     confirmationEmailSentAt: row.confirmation_email_sent_at || null,
     confirmationEmailError: row.confirmation_email_error || null,

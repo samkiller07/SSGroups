@@ -382,6 +382,14 @@ class DataRepository {
       return { success: false, error: 'Cancelled orders cannot be confirmed.' };
     }
 
+    // Delivery charge validation for delivery orders
+    if (order.deliveryMethod === 'DELIVERY' && (order.deliveryCharge === null || order.deliveryCharge === undefined)) {
+      return {
+        success: false,
+        error: 'Please set the delivery charge before confirming this delivery order.',
+      };
+    }
+
     const items = order.items || [];
 
     // STEP 1: Verify stock availability for ALL order items (Atomic Pre-Check)
@@ -414,7 +422,13 @@ class DataRepository {
       }
     }
 
-    // STEP 3: Mark order CONFIRMED
+    // STEP 3: Mark order CONFIRMED and finalize total
+    if (order.deliveryMethod === 'PICKUP') {
+      order.deliveryCharge = 0;
+      order.finalTotal = order.totalAmount;
+    } else {
+      order.finalTotal = order.totalAmount + (order.deliveryCharge || 0);
+    }
     order.status = 'CONFIRMED';
     order.confirmedAt = new Date().toISOString();
 
@@ -422,6 +436,26 @@ class DataRepository {
       success: true,
       order,
     };
+  }
+
+  public updateOrderDeliveryCharge(
+    orderId: string,
+    deliveryCharge: number,
+    adminEmail?: string
+  ): { success: boolean; order?: Order; error?: string } {
+    const order = this.orders.find((o) => o.id === orderId);
+    if (!order) {
+      return { success: false, error: 'Order not found.' };
+    }
+    if (order.status !== 'PENDING') {
+      return { success: false, error: 'Delivery charges can only be modified for PENDING orders.' };
+    }
+    order.deliveryCharge = deliveryCharge;
+    order.finalTotal = order.totalAmount + deliveryCharge;
+    order.deliveryChargeSetBy = adminEmail || 'admin';
+    order.deliveryChargeUpdatedAt = new Date().toISOString();
+
+    return { success: true, order };
   }
 
   public cancelOrder(orderId: string): { success: boolean; order?: Order; error?: string } {

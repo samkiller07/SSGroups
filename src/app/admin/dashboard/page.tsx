@@ -2389,7 +2389,7 @@ export default function AdminDashboardPage() {
                   <div>
                     <label className="font-bold uppercase text-slate-300 block">Item Gallery Images</label>
                     <p className="text-[11px] text-amber-300/90 font-medium mt-0.5">
-                      Use a direct public image URL, or upload the image. Google search-page URLs may not work.
+                      Use a direct public image URL or upload the image. Google search-result URLs may not work.
                     </p>
                   </div>
                   <label className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs cursor-pointer flex items-center gap-1.5 transition-colors shrink-0">

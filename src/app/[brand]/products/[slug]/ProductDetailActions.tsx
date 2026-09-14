@@ -43,8 +43,10 @@ export const ProductDetailActions: React.FC<ProductDetailActionsProps> = ({
 
   const addItem = useCartStore((state) => state.addItem);
   const isProduct = item.itemType === 'PRODUCT';
+  const isOutOfStock = isProduct && (item.isAvailable === false || item.stockQuantity === 0);
 
   const handleAddToCart = () => {
+    if (isOutOfStock) return;
     addItem(brand.id, item, quantity);
     setIsAdded(true);
     setTimeout(() => {
@@ -63,22 +65,24 @@ export const ProductDetailActions: React.FC<ProductDetailActionsProps> = ({
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             {/* Quantity Stepper */}
-            <div className="flex items-center bg-slate-900 border border-slate-700 rounded-xl p-1">
+            <div className={`flex items-center bg-slate-900 border border-slate-700 rounded-xl p-1 ${isOutOfStock ? 'opacity-40 pointer-events-none' : ''}`}>
               <button
                 type="button"
+                disabled={isOutOfStock}
                 onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors disabled:cursor-not-allowed"
                 aria-label="Decrease quantity"
               >
                 <Minus className="w-4 h-4" />
               </button>
               <span className="px-4 text-sm font-black text-white min-w-10 text-center">
-                {quantity}
+                {isOutOfStock ? 0 : quantity}
               </span>
               <button
                 type="button"
+                disabled={isOutOfStock || (item.stockQuantity !== null && item.stockQuantity !== undefined && quantity >= item.stockQuantity)}
                 onClick={() => setQuantity(quantity + 1)}
-                className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors disabled:cursor-not-allowed"
                 aria-label="Increase quantity"
               >
                 <Plus className="w-4 h-4" />
@@ -88,13 +92,22 @@ export const ProductDetailActions: React.FC<ProductDetailActionsProps> = ({
             {/* Add to Cart Button */}
             <button
               onClick={handleAddToCart}
-              disabled={!item.isAvailable}
-              className={`flex-1 py-3.5 px-6 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg transition-all transform active:scale-98 disabled:opacity-50 disabled:pointer-events-none ${
-                isAdded ? 'bg-emerald-400 text-slate-950 font-black' : theme.btnPrimary
+              disabled={isOutOfStock}
+              className={`flex-1 py-3.5 px-6 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg transition-all transform active:scale-98 ${
+                isOutOfStock
+                  ? 'bg-slate-800 text-slate-500 border border-slate-700/60 cursor-not-allowed opacity-60'
+                  : isAdded
+                  ? 'bg-emerald-400 text-slate-950 font-black'
+                  : theme.btnPrimary
               }`}
               id="detail-add-to-cart"
             >
-              {isAdded ? (
+              {isOutOfStock ? (
+                <>
+                  <ShoppingBag className="w-5 h-5 text-slate-500" />
+                  <span>Out of Stock</span>
+                </>
+              ) : isAdded ? (
                 <>
                   <Check className="w-5 h-5" />
                   <span>Added to {brand.name} Cart!</span>
@@ -134,12 +147,18 @@ export const ProductDetailActions: React.FC<ProductDetailActionsProps> = ({
 
             <button
               onClick={handleAddToCart}
-              disabled={!item.isAvailable}
+              disabled={isOutOfStock}
               className={`flex-1 py-3 px-4 rounded-xl font-black text-xs flex items-center justify-center gap-2 shadow-lg active:scale-95 ${
-                isAdded ? 'bg-emerald-400 text-slate-950' : theme.btnPrimary
-              } disabled:opacity-50`}
+                isOutOfStock
+                  ? 'bg-slate-800 text-slate-500 border border-slate-700/60 cursor-not-allowed opacity-60'
+                  : isAdded
+                  ? 'bg-emerald-400 text-slate-950'
+                  : theme.btnPrimary
+              }`}
             >
-              {isAdded ? (
+              {isOutOfStock ? (
+                <span>Out of Stock</span>
+              ) : isAdded ? (
                 <>
                   <Check className="w-4 h-4" />
                   <span>Added!</span>

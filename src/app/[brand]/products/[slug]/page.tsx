@@ -19,7 +19,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { ProductDetailActions } from './ProductDetailActions';
-import { getPersistentProductBySlug } from '@/lib/catalog-service';
+import { getPersistentProductBySlug, getPersistentBrandCatalog } from '@/lib/catalog-service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -55,13 +55,14 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
     notFound();
   }
 
-  const relatedItems = dataRepository
-    .getCatalogItems(brand.id, { categoryId: item.categoryId })
-    .filter((i) => i.id !== item.id)
+  const brandCatalog = await getPersistentBrandCatalog(brandId);
+  const relatedItems = (brandCatalog.allItems || [])
+    .filter((i) => i.categoryId === item.categoryId && i.id !== item.id)
     .slice(0, 4);
 
   const discount = calculateDiscount(item.originalPrice, item.offerPrice);
   const isProduct = item.itemType === 'PRODUCT';
+  const isOutOfStock = isProduct && (item.isAvailable === false || item.stockQuantity === 0);
 
   const serviceWhatsAppUrl = generateServiceInquiryWhatsAppUrl(brand, item);
 
@@ -192,9 +193,11 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
                   )}
                 </div>
                 {item.stockQuantity !== null && item.stockQuantity !== undefined && (
-                  <div className="text-xs text-slate-600 dark:text-slate-400 flex items-center gap-1.5 pt-1">
-                    <Package className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-                    <span>{formatStockDisplay(item.stockQuantity, item.unitType, item.unitValue)}</span>
+                  <div className="text-xs flex items-center gap-1.5 pt-1">
+                    <Package className={`w-3.5 h-3.5 ${isOutOfStock ? 'text-red-500' : 'text-cyan-600 dark:text-cyan-400'}`} />
+                    <span className={isOutOfStock ? 'text-red-500 dark:text-red-400 font-bold' : 'text-slate-600 dark:text-slate-400'}>
+                      {isOutOfStock ? 'Out of Stock' : formatStockDisplay(item.stockQuantity, item.unitType, item.unitValue)}
+                    </span>
                   </div>
                 )}
               </div>
@@ -211,9 +214,11 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
               </div>
             )}
 
-            <div className="mt-2 flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>{item.isAvailable ? 'In Stock / Active in Coimbatore Store' : 'Currently Unavailable'}</span>
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              <span className={`w-2 h-2 rounded-full ${isOutOfStock ? 'bg-red-500' : 'bg-emerald-500'}`} />
+              <span className={isOutOfStock ? 'text-red-600 dark:text-red-400 font-bold' : 'text-slate-600 dark:text-slate-400'}>
+                {isOutOfStock ? 'Out of Stock / Currently Unavailable' : 'In Stock / Active in Coimbatore Store'}
+              </span>
             </div>
           </div>
 

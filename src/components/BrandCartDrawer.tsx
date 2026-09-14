@@ -326,9 +326,9 @@ export const BrandCartDrawer: React.FC<BrandCartDrawerProps> = ({ brand, isOpen,
 
                     <button
                       type="button"
-                      onClick={() => setDeliveryMethod('HOME_DELIVERY')}
+                      onClick={() => setDeliveryMethod('DELIVERY')}
                       className={`p-2.5 rounded-xl border text-left text-xs transition-all ${
-                        deliveryMethod === 'HOME_DELIVERY'
+                        deliveryMethod === 'DELIVERY'
                           ? 'bg-emerald-50 dark:bg-slate-800 border-emerald-500 text-slate-950 dark:text-white'
                           : 'bg-slate-50 dark:bg-slate-900/80 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-400 dark:hover:border-slate-700'
                       }`}

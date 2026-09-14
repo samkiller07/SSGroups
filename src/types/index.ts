@@ -124,7 +124,7 @@ export interface BrandCartState {
   getItemCount: () => number;
 }
 
-export type DeliveryMethod = 'PICKUP' | 'HOME_DELIVERY';
+export type DeliveryMethod = 'PICKUP' | 'DELIVERY';
 
 export interface CheckoutPayload {
   brand: BrandConfig;
@@ -192,11 +192,20 @@ export interface Order {
   customerName: string;
   customerPhone: string;
   customerEmail: string;
-  deliveryMethod: DeliveryMethod | string;
+  deliveryMethod: DeliveryMethod;
+  deliveryAddress?: string;
+  deliveryLandmark?: string;
+  deliveryCity?: string;
+  deliveryPincode?: string;
+  deliveryNote?: string;
   customerNote?: string;
-  subtotal: number;
-  savings: number;
-  totalAmount: number;
+  subtotal: number; // MRP / Original subtotal
+  savings: number;  // Savings from MRP (subtotal - totalAmount)
+  totalAmount: number; // Products total before delivery
+  deliveryCharge?: number | null; // Admin-defined delivery fee (0 for PICKUP, null for pending DELIVERY)
+  finalTotal?: number; // Confirmed final payable total (totalAmount + deliveryCharge)
+  deliveryChargeSetBy?: string;
+  deliveryChargeUpdatedAt?: string;
   status: OrderStatus;
   confirmationEmailSentAt?: string | null;
   confirmationEmailError?: string | null;
@@ -212,6 +221,12 @@ export interface CustomerCheckoutInput {
   customerPhone: string;
   customerEmail: string;
   deliveryMethod: DeliveryMethod;
+  houseNo?: string;
+  streetArea?: string;
+  landmark?: string;
+  city?: string;
+  pincode?: string;
+  deliveryNote?: string;
   customerNote?: string;
   items: {
     catalogItemId: string;

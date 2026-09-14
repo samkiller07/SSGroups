@@ -37,7 +37,16 @@ export default function BrandCartPage() {
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>('PICKUP');
+  
+  // Delivery address fields
+  const [houseNo, setHouseNo] = useState('');
+  const [streetArea, setStreetArea] = useState('');
+  const [landmark, setLandmark] = useState('');
+  const [city, setCity] = useState('Coimbatore');
+  const [pincode, setPincode] = useState('');
+  const [deliveryNote, setDeliveryNote] = useState('');
   const [customerNote, setCustomerNote] = useState('');
+
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [completedInvoice, setCompletedInvoice] = useState<string | null>(null);
@@ -63,13 +72,33 @@ export default function BrandCartPage() {
       setErrorMessage('Please provide your full name before placing the order.');
       return;
     }
-    if (!customerPhone.trim() || customerPhone.replace(/\D/g, '').length < 10) {
-      setErrorMessage('Please provide a valid 10-digit phone number.');
+    const cleanPhone = customerPhone.replace(/\D/g, '');
+    if (!customerPhone.trim() || cleanPhone.length < 10) {
+      setErrorMessage('Please provide a valid 10-digit Indian phone number (e.g. 9791719662).');
       return;
     }
     if (!customerEmail.trim() || !customerEmail.includes('@')) {
       setErrorMessage('Please provide a valid email address for invoice and confirmation.');
       return;
+    }
+
+    if (deliveryMethod === 'DELIVERY') {
+      if (!houseNo.trim()) {
+        setErrorMessage('Please enter your House / Door Number for doorstep delivery.');
+        return;
+      }
+      if (!streetArea.trim()) {
+        setErrorMessage('Please enter your Street / Area name for doorstep delivery.');
+        return;
+      }
+      if (!city.trim()) {
+        setErrorMessage('Please enter your City for doorstep delivery.');
+        return;
+      }
+      if (!pincode.trim() || !/^[1-9][0-9]{5}$/.test(pincode.trim())) {
+        setErrorMessage('Please enter a valid 6-digit postal pincode (e.g. 641012).');
+        return;
+      }
     }
 
     setIsVerifying(true);
@@ -88,6 +117,12 @@ export default function BrandCartPage() {
         customerPhone: customerPhone.trim(),
         customerEmail: customerEmail.trim(),
         deliveryMethod,
+        houseNo: deliveryMethod === 'DELIVERY' ? houseNo.trim() : undefined,
+        streetArea: deliveryMethod === 'DELIVERY' ? streetArea.trim() : undefined,
+        landmark: deliveryMethod === 'DELIVERY' ? landmark.trim() : undefined,
+        city: deliveryMethod === 'DELIVERY' ? city.trim() : undefined,
+        pincode: deliveryMethod === 'DELIVERY' ? pincode.trim() : undefined,
+        deliveryNote: deliveryMethod === 'DELIVERY' ? deliveryNote.trim() : undefined,
         customerNote: customerNote.trim() || undefined,
         items: payload,
       });
@@ -109,7 +144,6 @@ export default function BrandCartPage() {
       setIsVerifying(false);
     }
   };
-
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 w-full flex-1">
@@ -138,7 +172,7 @@ export default function BrandCartPage() {
         <div className="mb-6 p-4 rounded-2xl bg-red-50 dark:bg-red-950/80 border border-red-300 dark:border-red-800 text-xs text-red-900 dark:text-red-200 flex items-center gap-3 shadow-sm">
           <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0" />
           <div>
-            <p className="font-bold text-slate-900 dark:text-white">Price / Inventory Notice</p>
+            <p className="font-bold text-slate-900 dark:text-white">Validation Notice</p>
             <p>{errorMessage}</p>
           </div>
         </div>
@@ -164,7 +198,7 @@ export default function BrandCartPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left Column: Cart Items List */}
+          {/* Left Column: Cart Items List + Details Form */}
           <div className="lg:col-span-8 space-y-4">
             <div className="p-5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
               <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
@@ -268,7 +302,7 @@ export default function BrandCartPage() {
                       type="text"
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
-                      placeholder="e.g. Anand Kumar"
+                      placeholder="e.g. Sam"
                       className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
                       required
                     />
@@ -276,14 +310,14 @@ export default function BrandCartPage() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Phone (WhatsApp)</label>
+                  <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Phone Number (WhatsApp)</label>
                   <div className="relative">
                     <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                     <input
                       type="tel"
                       value={customerPhone}
                       onChange={(e) => setCustomerPhone(e.target.value)}
-                      placeholder="e.g. +91 97917 19662"
+                      placeholder="e.g. 9791719662"
                       className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
                       required
                     />
@@ -307,11 +341,14 @@ export default function BrandCartPage() {
               </div>
             </div>
 
-            {/* Delivery & Fulfillment Details */}
+            {/* Delivery Method Selection */}
             <div className="p-5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
-              <h2 className="text-sm font-bold text-slate-950 dark:text-white uppercase tracking-wider">
-                Fulfillment & Location
-              </h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-slate-950 dark:text-white uppercase tracking-wider">
+                  Delivery Method <span className="text-red-500">*</span>
+                </h2>
+                <span className="text-[11px] text-slate-500">Choose how you wish to receive your items</span>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
@@ -325,18 +362,18 @@ export default function BrandCartPage() {
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <Store className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                    <span className="text-xs font-bold text-slate-900 dark:text-white">Direct Shop Pickup</span>
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">Shop Pickup</span>
                   </div>
                   <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                    Pick up in person at {brand.address}.
+                    Collect your order directly from the store.
                   </p>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setDeliveryMethod('HOME_DELIVERY')}
+                  onClick={() => setDeliveryMethod('DELIVERY')}
                   className={`p-4 rounded-xl border text-left transition-all ${
-                    deliveryMethod === 'HOME_DELIVERY'
+                    deliveryMethod === 'DELIVERY'
                       ? 'bg-emerald-50/80 dark:bg-slate-800 border-emerald-500 shadow-sm ring-1 ring-emerald-500/40'
                       : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700'
                   }`}
@@ -346,19 +383,127 @@ export default function BrandCartPage() {
                     <span className="text-xs font-bold text-slate-900 dark:text-white">Doorstep Delivery</span>
                   </div>
                   <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                    Free within ~{brand.freeDeliveryRadiusKm}km around Coimbatore store.
+                    Delivery available. Additional delivery charge applies based on your location.
                   </p>
                 </button>
               </div>
 
-              <div>
+              {/* Delivery Charge Notice */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0 mt-0.5" />
+                <p>
+                  Delivery charges will be calculated by our team based on your delivery location and confirmed before dispatch.
+                </p>
+              </div>
+
+              {/* Doorstep Delivery Address Form (Only visible for Doorstep Delivery) */}
+              {deliveryMethod === 'DELIVERY' && (
+                <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3 animate-in fade-in-50 duration-200">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      Doorstep Delivery Address <span className="text-red-500">*</span>
+                    </h3>
+                    <span className="text-[10px] text-slate-500">All address fields required</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        House / Door No <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={houseNo}
+                        onChange={(e) => setHouseNo(e.target.value)}
+                        placeholder="e.g. 12/4"
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Street / Area <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={streetArea}
+                        onChange={(e) => setStreetArea(e.target.value)}
+                        placeholder="e.g. Bharathi Nagar"
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Landmark <span className="text-slate-400 text-[10px]">(Optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={landmark}
+                        onChange={(e) => setLandmark(e.target.value)}
+                        placeholder="e.g. Near XYZ School"
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                          City <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          placeholder="Coimbatore"
+                          className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                          Pincode <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={6}
+                          value={pincode}
+                          onChange={(e) => setPincode(e.target.value.replace(/\D/g, ''))}
+                          placeholder="e.g. 641012"
+                          className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500 font-mono"
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1 pt-1">
+                    <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                      Delivery Instructions / Note:
+                    </label>
+                    <input
+                      type="text"
+                      value={deliveryNote}
+                      onChange={(e) => setDeliveryNote(e.target.value)}
+                      placeholder="e.g. Call before delivery / Leave at security desk"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* General Order Notes */}
+              <div className="pt-2">
                 <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1.5">
-                  Optional Delivery / Special Instructions Note:
+                  General Customer Note / Special Instructions:
                 </label>
                 <textarea
                   value={customerNote}
                   onChange={(e) => setCustomerNote(e.target.value)}
-                  placeholder="e.g. Please deliver around 5:30 PM / Specific fish food variant..."
+                  placeholder="e.g. Specific fish variant request / Preferred dispatch time..."
                   rows={2}
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700/80 rounded-xl p-3 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
                 />
@@ -406,10 +551,7 @@ export default function BrandCartPage() {
                     <span className="text-slate-500 dark:text-slate-400">Subtotal / MRP Value ({items.reduce((s, i) => s + i.quantity, 0)} items):</span>
                     <span className="font-semibold text-slate-950 dark:text-white">{formatPrice(originalSubtotal)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500 dark:text-slate-400">Delivery:</span>
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">FREE (~{brand.freeDeliveryRadiusKm}km)</span>
-                  </div>
+
                   {savings > 0 && (
                     <div className="flex justify-between text-emerald-800 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-lg border border-emerald-200 dark:border-emerald-800/40">
                       <span className="flex items-center gap-1 font-semibold">
@@ -419,16 +561,40 @@ export default function BrandCartPage() {
                       <span className="font-bold">-{formatPrice(savings)}</span>
                     </div>
                   )}
+
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">Products Total:</span>
+                    <span className="font-semibold text-slate-950 dark:text-white">{formatPrice(payableTotal)}</span>
+                  </div>
+
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">Delivery:</span>
+                    {deliveryMethod === 'PICKUP' ? (
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">₹0 (Shop Pickup)</span>
+                    ) : (
+                      <span className="font-semibold text-amber-600 dark:text-amber-400 text-right">To be confirmed based on location</span>
+                    )}
+                  </div>
                 </div>
 
-                <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">Total Amount</span>
-                    <span className="text-2xl font-black text-slate-950 dark:text-white">{formatPrice(payableTotal)}</span>
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">
+                        {deliveryMethod === 'PICKUP' ? 'Grand Total' : 'Current Products Total'}
+                      </span>
+                      <span className="text-2xl font-black text-slate-950 dark:text-white">{formatPrice(payableTotal)}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 text-right">
+                      {deliveryMethod === 'PICKUP' ? 'Pay on pickup' : 'Pay on delivery'}
+                    </span>
                   </div>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 text-right">
-                    Pay on delivery / <br /> pickup
-                  </span>
+
+                  {deliveryMethod === 'DELIVERY' && (
+                    <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 rounded-xl text-[11px] text-amber-900 dark:text-amber-300">
+                      Your final amount will include the delivery charge confirmed by our team.
+                    </div>
+                  )}
                 </div>
 
                 {errorMessage && (

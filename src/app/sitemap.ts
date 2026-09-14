@@ -1,8 +1,8 @@
 import { MetadataRoute } from 'next';
 import { BRANDS } from '@/config/brands';
-import { dataRepository } from '@/lib/data-store';
+import { getPersistentBrandCatalog } from '@/lib/catalog-service';
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://ss-multibrand.vercel.app';
   const routes: MetadataRoute.Sitemap = [
     {
@@ -14,7 +14,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   ];
 
   // Add brand-specific pages and catalog items
-  Object.keys(BRANDS).forEach((brandId) => {
+  for (const brandId of Object.keys(BRANDS)) {
     routes.push(
       {
         url: `${baseUrl}/${brandId}`,
@@ -36,7 +36,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
       }
     );
 
-    const items = dataRepository.getCatalogItems(brandId);
+    const catalogData = await getPersistentBrandCatalog(brandId);
+    const items = catalogData.allItems || [];
     items.forEach((item) => {
       routes.push({
         url: `${baseUrl}/${brandId}/products/${item.slug}`,
@@ -45,7 +46,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
         priority: 0.8,
       });
     });
-  });
+  }
 
   return routes;
 }

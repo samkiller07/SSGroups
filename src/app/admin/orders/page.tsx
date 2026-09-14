@@ -11,6 +11,7 @@ import {
   getAdminOrdersAction, 
   confirmAdminOrderAction, 
   cancelAdminOrderAction,
+  updateOrderDeliveryChargeAction,
   adminLogoutAction 
 } from '@/app/actions/admin-actions';
 import { 
@@ -46,7 +47,9 @@ import {
   Calendar,
   Eye,
   HelpCircle,
-  Menu
+  Menu,
+  Save,
+  MapPin
 } from 'lucide-react';
 
 interface ToastMessage {
@@ -75,6 +78,8 @@ export default function AdminOrdersPage() {
 
   // Selected Order for Details Drawer
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [deliveryChargeInput, setDeliveryChargeInput] = useState<string>('');
+  const [isSavingDeliveryCharge, setIsSavingDeliveryCharge] = useState(false);
 
   // Dialog states for Confirm & Cancel
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -93,6 +98,17 @@ export default function AdminOrdersPage() {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4500);
   };
+
+  // Sync delivery charge input when selected order changes
+  useEffect(() => {
+    if (selectedOrder) {
+      if (selectedOrder.deliveryCharge !== null && selectedOrder.deliveryCharge !== undefined) {
+        setDeliveryChargeInput(String(selectedOrder.deliveryCharge));
+      } else {
+        setDeliveryChargeInput('');
+      }
+    }
+  }, [selectedOrder?.id, selectedOrder?.deliveryCharge]);
 
   // Load orders from authoritative server action
   const loadOrders = async () => {
@@ -125,6 +141,51 @@ export default function AdminOrdersPage() {
   useEffect(() => {
     loadOrders();
   }, [selectedBrand, selectedStatus, searchQuery]);
+
+  // Save manual delivery charge
+  const handleSaveDeliveryCharge = async () => {
+    if (!selectedOrder) return;
+    const num = parseFloat(deliveryChargeInput.trim());
+    if (isNaN(num) || num < 0) {
+      showToast('Please enter a valid non-negative delivery charge (e.g. 80).', 'error');
+      return;
+    }
+
+    setIsSavingDeliveryCharge(true);
+    try {
+      const res = await updateOrderDeliveryChargeAction({
+        orderId: selectedOrder.id,
+        deliveryCharge: num,
+      });
+
+      if (res.success && res.order) {
+        showToast(res.message || `Delivery charge of ₹${num} saved.`, 'success');
+        setSelectedOrder(res.order);
+        await loadOrders();
+      } else {
+        showToast(res.error || 'Failed to update delivery charge.', 'error');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error updating delivery charge';
+      showToast(msg, 'error');
+    } finally {
+      setIsSavingDeliveryCharge(false);
+    }
+  };
+
+  // Open Confirm Modal with validation
+  const handleOpenConfirmModal = () => {
+    if (!selectedOrder) return;
+    setActionError(null);
+
+    const isDelivery = selectedOrder.deliveryMethod === 'DELIVERY' || (selectedOrder.deliveryMethod as string) === 'HOME_DELIVERY';
+    if (isDelivery && (selectedOrder.deliveryCharge === null || selectedOrder.deliveryCharge === undefined)) {
+      showToast('Please set the delivery charge before confirming this delivery order.', 'error');
+      return;
+    }
+
+    setIsConfirmModalOpen(true);
+  };
 
   // Execute Atomic Confirmation
   const handleConfirmOrder = async () => {
@@ -253,200 +314,65 @@ export default function AdminOrdersPage() {
         <div className="flex items-center gap-3">
           <Link
             href="/admin/dashboard"
-            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors flex items-center gap-1.5"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Admin Dashboard</span>
+            <Boxes className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Manage Catalog</span>
           </Link>
 
-          <button
-            onClick={() => adminLogoutAction()}
-            className="p-2 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors"
-            title="Logout"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          <form action={adminLogoutAction}>
+            <button
+              type="submit"
+              className="p-2 rounded-lg bg-slate-800 hover:bg-rose-950/80 hover:text-rose-300 text-slate-400 transition-colors"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </form>
         </div>
       </header>
 
-      {/* Main Layout */}
-      <div className="flex-1 flex">
-        {/* Sidebar Nav */}
-        <aside
-          className={`fixed md:static inset-y-0 left-0 z-40 w-64 bg-slate-900 border-r border-slate-800 p-4 space-y-6 transform transition-transform md:translate-x-0 ${
-            isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-          }`}
-        >
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider px-3 mb-2">
-              Management Suite
+      {/* Main Content Body */}
+      <div className="flex-1 flex max-w-7xl mx-auto w-full px-4 sm:px-8 py-8 gap-8">
+        <main className="flex-1 space-y-6">
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Orders</span>
+              <div className="text-2xl font-black text-white">{kpis.totalOrders}</div>
             </div>
-            <Link
-              href="/admin/orders"
-              className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold bg-cyan-950 text-cyan-300 border border-cyan-700 shadow-sm"
-            >
-              <div className="flex items-center gap-2.5">
-                <FileText className="w-4 h-4" />
-                <span>Orders & Confirmations</span>
-              </div>
-              {kpis.pendingOrders > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                  {kpis.pendingOrders}
-                </span>
-              )}
-            </Link>
-
-            <Link
-              href="/admin/dashboard"
-              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
-            >
-              <ShoppingBag className="w-4 h-4" />
-              <span>Products & Services</span>
-            </Link>
-
-            <Link
-              href="/admin/dashboard"
-              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
-            >
-              <Boxes className="w-4 h-4 text-emerald-400" />
-              <span>Inventory Control</span>
-            </Link>
-
-            <Link
-              href="/admin/dashboard"
-              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
-            >
-              <Megaphone className="w-4 h-4 text-rose-400" />
-              <span>Daily Hero Status</span>
-            </Link>
-
-            <Link
-              href="/admin/dashboard"
-              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
-            >
-              <Layers className="w-4 h-4 text-purple-400" />
-              <span>Categories</span>
-            </Link>
-          </div>
-
-          {/* Quick Brand Links */}
-          <div className="pt-4 border-t border-slate-800 space-y-1">
-            <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider px-3 mb-2">
-              Direct Storefronts
+            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Pending Review</span>
+              <div className="text-2xl font-black text-amber-400">{kpis.pendingOrders}</div>
             </div>
-            <a
-              href="/aquarium"
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <span>SS Aquarium</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-            <a
-              href="/kirubai"
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <span>Kirubai Kitchen</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-            <a
-              href="/vision-360"
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <span>SS Vision 360</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        </aside>
-
-        {/* Mobile Sidebar Overlay */}
-        {isMobileSidebarOpen && (
-          <div
-            className="fixed inset-0 bg-black/60 z-30 md:hidden"
-            onClick={() => setIsMobileSidebarOpen(false)}
-          />
-        )}
-
-        {/* Main Workspace */}
-        <main className="flex-1 p-4 sm:p-8 space-y-6 max-w-7xl w-full">
-          {/* Page Title & Refresh */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-bold text-cyan-400 uppercase tracking-wider">
-                <ShieldCheck className="w-4 h-4" />
-                <span>Production Order Lifecycle & Stock Verification</span>
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight mt-1">
-                Customer Orders & Confirmations
-              </h1>
+            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Confirmed Orders</span>
+              <div className="text-2xl font-black text-emerald-400">{kpis.confirmedOrders}</div>
             </div>
-
-            <button
-              onClick={() => loadOrders()}
-              disabled={isLoading}
-              className="self-start sm:self-auto px-4 py-2 bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors disabled:opacity-50"
-            >
-              <RotateCcw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>Refresh Orders</span>
-            </button>
-          </div>
-
-          {/* KPI Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
-            <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800/80">
-              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Orders</div>
-              <div className="text-2xl font-black text-white mt-1">{kpis.totalOrders}</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">All customer requests</div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30">
-              <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">Pending Orders</div>
-              <div className="text-2xl font-black text-amber-300 mt-1">{kpis.pendingOrders}</div>
-              <div className="text-[10px] text-amber-500/80 mt-0.5">Awaiting stock confirmation</div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">
-              <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Confirmed</div>
-              <div className="text-2xl font-black text-emerald-300 mt-1">{kpis.confirmedOrders}</div>
-              <div className="text-[10px] text-emerald-500/80 mt-0.5">Stock deducted & notified</div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30">
-              <div className="text-[11px] font-bold text-rose-400 uppercase tracking-wider">Cancelled</div>
-              <div className="text-2xl font-black text-rose-300 mt-1">{kpis.cancelledOrders}</div>
-              <div className="text-[10px] text-rose-500/80 mt-0.5">Stock untouched</div>
-            </div>
-
-            <div className="col-span-2 lg:col-span-1 p-4 rounded-2xl bg-cyan-950/40 border border-cyan-700/50">
-              <div className="text-[11px] font-bold text-cyan-300 uppercase tracking-wider">Confirmed Sales</div>
-              <div className="text-2xl font-black text-cyan-400 mt-1">{formatPrice(kpis.confirmedRevenue)}</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">Excludes pending / cancelled</div>
+            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">Confirmed Revenue</span>
+              <div className="text-2xl font-black text-cyan-400">{formatPrice(kpis.confirmedRevenue)}</div>
             </div>
           </div>
 
-          {/* Filter Bar & Search */}
-          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row gap-3 items-center justify-between">
-            <div className="w-full sm:w-80 relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+          {/* Filters Bar */}
+          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="relative w-full sm:w-80">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search invoice, customer, phone, email..."
+                placeholder="Search invoice, customer, phone..."
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
               />
             </div>
 
-            <div className="flex items-center gap-2.5 w-full sm:w-auto">
+            <div className="flex items-center gap-3 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
               <select
                 value={selectedBrand}
                 onChange={(e) => setSelectedBrand(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
               >
                 <option value="all">All Brands</option>
                 <option value="aquarium">SS Aquarium</option>
@@ -457,26 +383,34 @@ export default function AdminOrdersPage() {
               <select
                 value={selectedStatus}
                 onChange={(e) => setSelectedStatus(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
               >
                 <option value="all">All Statuses</option>
-                <option value="PENDING">Pending Only</option>
-                <option value="CONFIRMED">Confirmed Only</option>
-                <option value="CANCELLED">Cancelled Only</option>
+                <option value="PENDING">Pending</option>
+                <option value="CONFIRMED">Confirmed</option>
+                <option value="CANCELLED">Cancelled</option>
               </select>
+
+              <button
+                onClick={loadOrders}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300"
+                title="Refresh Orders"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
           {/* Orders Table */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden shadow-xl">
+          <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
             {isLoading ? (
-              <div className="p-16 flex flex-col items-center justify-center gap-3 text-slate-400">
-                <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-                <span className="text-xs">Loading orders...</span>
+              <div className="p-16 text-center text-slate-500 text-xs flex flex-col items-center gap-3">
+                <Loader2 className="w-6 h-6 animate-spin text-cyan-500" />
+                <span>Loading persistent orders from Supabase...</span>
               </div>
             ) : orders.length === 0 ? (
               <div className="p-16 text-center space-y-3">
-                <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center mx-auto text-slate-500">
+                <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-500 mx-auto">
                   <FileText className="w-6 h-6" />
                 </div>
                 <div className="text-base font-bold text-slate-200">No Orders Found</div>
@@ -494,7 +428,10 @@ export default function AdminOrdersPage() {
                       <th className="py-3 px-4">Invoice No</th>
                       <th className="py-3 px-4">Customer</th>
                       <th className="py-3 px-4">Brand</th>
-                      <th className="py-3 px-4">Total Amount</th>
+                      <th className="py-3 px-4">Fulfillment</th>
+                      <th className="py-3 px-4">Products</th>
+                      <th className="py-3 px-4">Delivery Fee</th>
+                      <th className="py-3 px-4">Grand Total</th>
                       <th className="py-3 px-4">Status</th>
                       <th className="py-3 px-4">Date</th>
                       <th className="py-3 px-4 text-right">Actions</th>
@@ -503,6 +440,7 @@ export default function AdminOrdersPage() {
                   <tbody className="divide-y divide-slate-800/60">
                     {orders.map((order) => {
                       const brand = BRANDS[order.brandId];
+                      const isDelivery = order.deliveryMethod === 'DELIVERY' || (order.deliveryMethod as string) === 'HOME_DELIVERY';
                       const formattedDate = new Date(order.createdAt).toLocaleDateString('en-IN', {
                         day: 'numeric',
                         month: 'short',
@@ -510,6 +448,14 @@ export default function AdminOrdersPage() {
                         hour: '2-digit',
                         minute: '2-digit',
                       });
+
+                      const productsTotal = Number(order.totalAmount || 0);
+                      const deliveryFee = order.deliveryCharge !== null && order.deliveryCharge !== undefined
+                        ? formatPrice(order.deliveryCharge)
+                        : (isDelivery ? 'Pending' : '₹0');
+                      const grandTotal = isDelivery && (order.deliveryCharge === null || order.deliveryCharge === undefined)
+                        ? `${formatPrice(productsTotal)} + Fee`
+                        : formatPrice(order.finalTotal || productsTotal + Number(order.deliveryCharge || 0));
 
                       return (
                         <tr
@@ -529,8 +475,24 @@ export default function AdminOrdersPage() {
                               {brand?.name || order.brandId}
                             </span>
                           </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold flex items-center gap-1 w-fit ${
+                              isDelivery ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50' : 'bg-cyan-950/80 text-cyan-400 border border-cyan-800/50'
+                            }`}>
+                              {isDelivery ? <Truck className="w-3 h-3" /> : <Store className="w-3 h-3" />}
+                              <span>{isDelivery ? 'Delivery' : 'Pickup'}</span>
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 font-semibold text-slate-200">
+                            {formatPrice(productsTotal)}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`font-semibold ${isDelivery && order.deliveryCharge === null ? 'text-amber-400 font-mono text-[11px]' : 'text-slate-300'}`}>
+                              {deliveryFee}
+                            </span>
+                          </td>
                           <td className="py-3.5 px-4 font-extrabold text-white">
-                            {formatPrice(order.totalAmount)}
+                            {grandTotal}
                           </td>
                           <td className="py-3.5 px-4">
                             {getStatusBadge(order.status)}
@@ -592,38 +554,74 @@ export default function AdminOrdersPage() {
             {/* Drawer Body */}
             <div className="p-6 space-y-6 flex-1 text-xs">
               {/* Customer Information Card */}
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
                 <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
                   Customer & Delivery Details
                 </div>
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Name</span>
+                    <span className="text-slate-500 block text-[10px]">Customer Name</span>
                     <span className="font-bold text-white text-sm">{selectedOrder.customerName}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Fulfillment</span>
-                    <span className="font-semibold text-cyan-300">
-                      {selectedOrder.deliveryMethod === 'HOME_DELIVERY' ? 'Doorstep Delivery' : 'Store Pickup'}
+                    <span className="text-slate-500 block text-[10px]">Fulfillment Mode</span>
+                    <span className="font-semibold text-cyan-300 flex items-center gap-1.5 mt-0.5">
+                      {selectedOrder.deliveryMethod === 'DELIVERY' || (selectedOrder.deliveryMethod as string) === 'HOME_DELIVERY' ? (
+                        <>
+                          <Truck className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Doorstep Delivery</span>
+                        </>
+                      ) : (
+                        <>
+                          <Store className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Shop Pickup</span>
+                        </>
+                      )}
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Phone</span>
+                    <span className="text-slate-500 block text-[10px]">Phone (WhatsApp)</span>
                     <a href={`tel:${selectedOrder.customerPhone}`} className="text-slate-200 hover:underline">
                       {selectedOrder.customerPhone}
                     </a>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Email</span>
+                    <span className="text-slate-500 block text-[10px]">Email Address</span>
                     <a href={`mailto:${selectedOrder.customerEmail}`} className="text-slate-200 hover:underline truncate block">
                       {selectedOrder.customerEmail}
                     </a>
                   </div>
                 </div>
 
+                {/* Structured Delivery Address Box (if Delivery) */}
+                {(selectedOrder.deliveryMethod === 'DELIVERY' || (selectedOrder.deliveryMethod as string) === 'HOME_DELIVERY') && (
+                  <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5 mt-2">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
+                      <MapPin className="w-3.5 h-3.5" />
+                      <span>Doorstep Delivery Address</span>
+                    </div>
+                    <div className="text-slate-200 font-medium leading-relaxed">
+                      {selectedOrder.deliveryAddress || 'Address on file'}
+                    </div>
+                    {selectedOrder.deliveryLandmark && (
+                      <div className="text-slate-400 text-[11px]">
+                        <span className="text-slate-500">Landmark:</span> {selectedOrder.deliveryLandmark}
+                      </div>
+                    )}
+                    <div className="text-slate-400 text-[11px]">
+                      <span className="text-slate-500">City / Pincode:</span> {selectedOrder.deliveryCity || 'Coimbatore'} {selectedOrder.deliveryPincode ? `— ${selectedOrder.deliveryPincode}` : ''}
+                    </div>
+                    {selectedOrder.deliveryNote && (
+                      <div className="text-amber-300/90 text-[11px] pt-1 border-t border-slate-800 mt-1">
+                        <span className="text-slate-500">Delivery Instructions:</span> {selectedOrder.deliveryNote}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {selectedOrder.customerNote && (
                   <div className="pt-2 border-t border-slate-850 mt-2">
-                    <span className="text-slate-500 block text-[10px]">Customer Note</span>
+                    <span className="text-slate-500 block text-[10px]">General Customer Note</span>
                     <p className="text-slate-300 italic">{selectedOrder.customerNote}</p>
                   </div>
                 )}
@@ -656,21 +654,93 @@ export default function AdminOrdersPage() {
                   ))}
                 </div>
 
-                {/* Totals */}
-                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                {/* Price Breakdown & Delivery Charge Form */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
                   <div className="flex justify-between text-slate-400">
-                    <span>Subtotal / MRP:</span>
+                    <span>Subtotal / MRP Value:</span>
                     <span className="text-white font-semibold">{formatPrice(selectedOrder.subtotal)}</span>
                   </div>
+
                   {selectedOrder.savings > 0 && (
                     <div className="flex justify-between text-emerald-400">
-                      <span>Savings:</span>
+                      <span>Total Savings:</span>
                       <span>-{formatPrice(selectedOrder.savings)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between text-sm font-black pt-2 border-t border-slate-800">
-                    <span>Total Amount:</span>
-                    <span className="text-cyan-400 text-base">{formatPrice(selectedOrder.totalAmount)}</span>
+
+                  <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-850">
+                    <span className="font-semibold">Products Total:</span>
+                    <span className="text-white font-bold">{formatPrice(selectedOrder.totalAmount)}</span>
+                  </div>
+
+                  {/* Manual Delivery Charge Configuration for Delivery Orders */}
+                  {(selectedOrder.deliveryMethod === 'DELIVERY' || (selectedOrder.deliveryMethod as string) === 'HOME_DELIVERY') ? (
+                    <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                          <Truck className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Delivery Charge (₹)</span>
+                        </label>
+                        {selectedOrder.status !== 'PENDING' && (
+                          <span className="text-[10px] text-slate-500 font-mono">Locked (Confirmed)</span>
+                        )}
+                      </div>
+
+                      {selectedOrder.status === 'PENDING' ? (
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={deliveryChargeInput}
+                              onChange={(e) => setDeliveryChargeInput(e.target.value)}
+                              placeholder="e.g. 80"
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-2 text-xs font-bold text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 font-mono"
+                            />
+                          </div>
+
+                          <button
+                            onClick={handleSaveDeliveryCharge}
+                            disabled={isSavingDeliveryCharge}
+                            className="px-3 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-slate-950 text-xs font-black rounded-xl transition-colors flex items-center gap-1 shrink-0"
+                          >
+                            {isSavingDeliveryCharge ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Save className="w-3.5 h-3.5" />
+                            )}
+                            <span>Save Charge</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-sm font-extrabold text-emerald-400 font-mono">
+                          {formatPrice(selectedOrder.deliveryCharge || 0)}
+                        </div>
+                      )}
+
+                      {selectedOrder.status === 'PENDING' && (selectedOrder.deliveryCharge === null || selectedOrder.deliveryCharge === undefined) && (
+                        <p className="text-[11px] text-amber-400 font-medium">
+                          ⚠️ Delivery charge is pending. You must save a delivery charge before confirming this order.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex justify-between text-slate-400">
+                      <span>Delivery Charge:</span>
+                      <span className="text-emerald-400 font-semibold">₹0 (Shop Pickup)</span>
+                    </div>
+                  )}
+
+                  {/* Grand Total */}
+                  <div className="flex justify-between text-sm font-black pt-3 border-t border-slate-800">
+                    <span className="text-white">Grand Total:</span>
+                    <span className="text-cyan-400 text-base font-mono">
+                      {(selectedOrder.deliveryMethod === 'DELIVERY' || (selectedOrder.deliveryMethod as string) === 'HOME_DELIVERY') && (selectedOrder.deliveryCharge === null || selectedOrder.deliveryCharge === undefined)
+                        ? `${formatPrice(selectedOrder.totalAmount)} (Pending Charge)`
+                        : formatPrice(selectedOrder.finalTotal || (selectedOrder.totalAmount + (selectedOrder.deliveryCharge || 0)))}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -723,7 +793,7 @@ export default function AdminOrdersPage() {
             </div>
 
             {/* Drawer Actions for PENDING orders */}
-            <div className="p-5 border-t border-slate-800 bg-slate-900 sticky bottom-0">
+            <div className="p-5 border-t border-slate-800 bg-slate-950 sticky bottom-0">
               {selectedOrder.status === 'PENDING' ? (
                 <div className="grid grid-cols-2 gap-3">
                   <button
@@ -731,16 +801,13 @@ export default function AdminOrdersPage() {
                       setActionError(null);
                       setIsCancelModalOpen(true);
                     }}
-                    className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-rose-950/80 hover:text-rose-300 hover:border-rose-800 border border-slate-700 text-xs font-bold text-slate-300 transition-colors"
+                    className="py-3 px-4 rounded-xl bg-slate-900 hover:bg-rose-950/80 hover:text-rose-300 hover:border-rose-800 border border-slate-800 text-xs font-bold text-slate-300 transition-colors"
                   >
                     Cancel Order
                   </button>
 
                   <button
-                    onClick={() => {
-                      setActionError(null);
-                      setIsConfirmModalOpen(true);
-                    }}
+                    onClick={handleOpenConfirmModal}
                     className="py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black shadow-lg shadow-emerald-950/40 transition-all active:scale-98"
                   >
                     Confirm & Deduct Stock
@@ -773,6 +840,24 @@ export default function AdminOrdersPage() {
               <p className="text-xs text-slate-400 mt-1 leading-relaxed">
                 This action executes an <strong>atomic stock deduction</strong> for all items and dispatches an official branded confirmation email to <strong>{selectedOrder.customerEmail}</strong>.
               </p>
+              <div className="mt-3 p-3 bg-slate-950 rounded-xl border border-slate-800 text-xs text-left space-y-1 font-mono">
+                <div className="flex justify-between text-slate-400">
+                  <span>Products Total:</span>
+                  <span className="text-white">{formatPrice(selectedOrder.totalAmount)}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Delivery Charge:</span>
+                  <span className="text-emerald-400">
+                    {selectedOrder.deliveryMethod === 'PICKUP' ? '₹0' : formatPrice(selectedOrder.deliveryCharge || 0)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-white font-bold pt-1 border-t border-slate-800">
+                  <span>Grand Total:</span>
+                  <span className="text-cyan-400">
+                    {formatPrice(selectedOrder.finalTotal || (selectedOrder.totalAmount + (selectedOrder.deliveryCharge || 0)))}
+                  </span>
+                </div>
+              </div>
             </div>
 
             {actionError && (

@@ -159,11 +159,20 @@ CREATE TABLE IF NOT EXISTS public.orders (
     customer_name TEXT NOT NULL,
     customer_phone TEXT NOT NULL,
     customer_email TEXT NOT NULL,
-    delivery_method TEXT NOT NULL,
+    delivery_method TEXT NOT NULL, -- 'PICKUP' or 'DELIVERY'
+    delivery_address TEXT,
+    delivery_landmark TEXT,
+    delivery_city TEXT DEFAULT 'Coimbatore',
+    delivery_pincode TEXT,
+    delivery_note TEXT,
     customer_note TEXT,
-    subtotal NUMERIC(10, 2) NOT NULL,
-    savings NUMERIC(10, 2) DEFAULT 0,
-    total_amount NUMERIC(10, 2) NOT NULL,
+    subtotal NUMERIC(10, 2) NOT NULL, -- MRP / Original subtotal
+    savings NUMERIC(10, 2) DEFAULT 0,  -- Savings from MRP (subtotal - total_amount)
+    total_amount NUMERIC(10, 2) NOT NULL, -- Products total before delivery charge
+    delivery_charge NUMERIC(10, 2) DEFAULT NULL, -- Admin-set delivery fee (0 for PICKUP, NULL for pending DELIVERY)
+    final_total NUMERIC(10, 2), -- Confirmed final payable total (total_amount + delivery_charge)
+    delivery_charge_set_by TEXT,
+    delivery_charge_updated_at TIMESTAMPTZ,
     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
     confirmation_email_sent_at TIMESTAMPTZ,
     confirmation_email_error TEXT,

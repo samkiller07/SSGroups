@@ -41,6 +41,7 @@ function getTransporter() {
 export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandConfig): string {
   const brandColor = brand.theme.primaryColor || '#06B6D4';
   const items = order.items || [];
+  const isDelivery = order.deliveryMethod === 'DELIVERY' || (order.deliveryMethod as string) === 'HOME_DELIVERY';
   const formattedDate = new Date(order.confirmedAt || order.createdAt).toLocaleDateString('en-IN', {
     day: 'numeric',
     month: 'short',
@@ -48,6 +49,10 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
     hour: '2-digit',
     minute: '2-digit',
   });
+
+  const productsTotal = Number(order.totalAmount || 0);
+  const deliveryCharge = Number(order.deliveryCharge || 0);
+  const grandTotal = Number(order.finalTotal || productsTotal + deliveryCharge);
 
   const itemsRows = items
     .map(
@@ -114,19 +119,29 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
               <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.5px;">Invoice Number</div>
               <div style="font-size: 16px; font-weight: 800; color: ${brandColor}; margin-top: 4px;">${escapeHtml(order.invoiceNumber)}</div>
               <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Date: ${formattedDate}</div>
+              <div style="font-size: 12px; color: #0284c7; font-weight: 600; margin-top: 6px;">Fulfillment: ${isDelivery ? 'Doorstep Delivery' : 'Shop Pickup'}</div>
             </td>
             <td style="padding: 14px 16px; width: 50%; vertical-align: top;">
               <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748b; letter-spacing: 0.5px;">Customer Details</div>
               <div style="font-size: 13px; font-weight: 600; color: #1e293b; margin-top: 4px;">${escapeHtml(order.customerName)}</div>
               <div style="font-size: 12px; color: #475569;">📞 ${escapeHtml(order.customerPhone)}</div>
               <div style="font-size: 12px; color: #475569;">✉️ ${escapeHtml(order.customerEmail)}</div>
-              <div style="font-size: 12px; color: #0284c7; font-weight: 600; margin-top: 4px;">Mode: ${order.deliveryMethod === 'HOME_DELIVERY' ? 'Doorstep Delivery' : 'Store Pickup'}</div>
             </td>
           </tr>
-          ${order.customerNote ? `
+          ${isDelivery && order.deliveryAddress ? `
           <tr>
-            <td colspan="2" style="padding: 10px 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #475569; background-color: #f1f5f9;">
-              <strong>Note:</strong> ${escapeHtml(order.customerNote)}
+            <td colspan="2" style="padding: 12px 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #334155; background-color: #f1f5f9;">
+              <strong>📍 Delivery Address:</strong><br/>
+              ${escapeHtml(order.deliveryAddress)}<br/>
+              ${order.deliveryLandmark ? `Landmark: ${escapeHtml(order.deliveryLandmark)}<br/>` : ''}
+              ${escapeHtml(order.deliveryCity || 'Coimbatore')} ${order.deliveryPincode ? `— ${escapeHtml(order.deliveryPincode)}` : ''}
+            </td>
+          </tr>
+          ` : ''}
+          ${order.deliveryNote || order.customerNote ? `
+          <tr>
+            <td colspan="2" style="padding: 10px 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #475569; background-color: #f8fafc;">
+              <strong>Note / Instructions:</strong> ${escapeHtml((order.deliveryNote || order.customerNote) || '')}
             </td>
           </tr>
           ` : ''}
@@ -150,8 +165,8 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
         <!-- Price Totals -->
         <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 24px;">
           <tr>
-            <td style="width: 55%;"></td>
-            <td style="width: 45%;">
+            <td style="width: 45%;"></td>
+            <td style="width: 55%;">
               <table width="100%" border="0" cellspacing="0" cellpadding="0">
                 <tr>
                   <td style="padding: 4px 0; font-size: 13px; color: #64748b;">Subtotal / MRP:</td>
@@ -164,8 +179,16 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
                 </tr>
                 ` : ''}
                 <tr>
+                  <td style="padding: 4px 0; font-size: 13px; color: #64748b;">Products Total:</td>
+                  <td style="padding: 4px 0; font-size: 13px; color: #1e293b; text-align: right; font-weight: 600;">₹${productsTotal.toLocaleString('en-IN')}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 4px 0; font-size: 13px; color: #64748b;">Delivery Charge:</td>
+                  <td style="padding: 4px 0; font-size: 13px; color: #1e293b; text-align: right; font-weight: 600;">${deliveryCharge > 0 ? `₹${deliveryCharge.toLocaleString('en-IN')}` : '₹0 (Store Pickup / Free)'}</td>
+                </tr>
+                <tr>
                   <td style="padding: 10px 0 4px 0; font-size: 16px; font-weight: 800; color: #0f172a; border-top: 2px solid #e2e8f0;">Grand Total:</td>
-                  <td style="padding: 10px 0 4px 0; font-size: 18px; font-weight: 800; color: ${brandColor}; text-align: right; border-top: 2px solid #e2e8f0;">₹${Number(order.totalAmount).toLocaleString('en-IN')}</td>
+                  <td style="padding: 10px 0 4px 0; font-size: 18px; font-weight: 800; color: ${brandColor}; text-align: right; border-top: 2px solid #e2e8f0;">₹${grandTotal.toLocaleString('en-IN')}</td>
                 </tr>
               </table>
             </td>
@@ -192,7 +215,7 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
     </tr>
 
   </table>
-</body>
+ </body>
 </html>
   `.trim();
 }
@@ -202,12 +225,28 @@ export function generateOrderConfirmationEmailHtml(order: Order, brand: BrandCon
  */
 export function generateOrderConfirmationEmailText(order: Order, brand: BrandConfig): string {
   const items = order.items || [];
+  const isDelivery = order.deliveryMethod === 'DELIVERY' || (order.deliveryMethod as string) === 'HOME_DELIVERY';
+  const productsTotal = Number(order.totalAmount || 0);
+  const deliveryCharge = Number(order.deliveryCharge || 0);
+  const grandTotal = Number(order.finalTotal || productsTotal + deliveryCharge);
+
   const itemsList = items
     .map(
       (i) =>
         `* ${i.productName}\n   Qty: ${i.quantity} × Rs. ${Number(i.unitPrice).toLocaleString('en-IN')} = Rs. ${Number(i.lineTotal).toLocaleString('en-IN')}`
     )
     .join('\n\n');
+
+  let addressInfo = `- Delivery Method: ${isDelivery ? 'Doorstep Delivery' : 'Direct Store Pickup'}\n`;
+  if (isDelivery && order.deliveryAddress) {
+    addressInfo += `- Delivery Address: ${order.deliveryAddress}\n`;
+    if (order.deliveryLandmark) addressInfo += `  Landmark: ${order.deliveryLandmark}\n`;
+    addressInfo += `  City/PIN: ${order.deliveryCity || 'Coimbatore'} ${order.deliveryPincode || ''}\n`;
+  }
+  const note = order.deliveryNote || order.customerNote;
+  if (note) {
+    addressInfo += `- Note: ${note}\n`;
+  }
 
   return `
 ORDER CONFIRMATION — ${order.invoiceNumber}
@@ -222,8 +261,7 @@ INVOICE DETAILS:
 - Invoice Number: ${order.invoiceNumber}
 - Customer Name: ${order.customerName}
 - Phone: ${order.customerPhone}
-- Delivery Method: ${order.deliveryMethod === 'HOME_DELIVERY' ? 'Doorstep Delivery in Coimbatore' : 'Direct Store Pickup'}
-- Status: CONFIRMED
+${addressInfo}- Status: CONFIRMED
 - Date: ${new Date(order.confirmedAt || order.createdAt).toLocaleDateString('en-IN')}
 
 ITEMS ORDERED:
@@ -231,7 +269,9 @@ ${itemsList}
 
 PAYMENT SUMMARY:
 - Subtotal / MRP: Rs. ${Number(order.subtotal).toLocaleString('en-IN')}
-${order.savings > 0 ? `- Savings: -Rs. ${Number(order.savings).toLocaleString('en-IN')}\n` : ''}- Total Amount: Rs. ${Number(order.totalAmount).toLocaleString('en-IN')}
+${order.savings > 0 ? `- Savings: -Rs. ${Number(order.savings).toLocaleString('en-IN')}\n` : ''}- Products Total: Rs. ${productsTotal.toLocaleString('en-IN')}
+- Delivery Charge: Rs. ${deliveryCharge.toLocaleString('en-IN')}
+- Grand Total: Rs. ${grandTotal.toLocaleString('en-IN')}
 
 STORE INFORMATION:
 ${brand.name}

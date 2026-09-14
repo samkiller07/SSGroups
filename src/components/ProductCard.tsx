@@ -46,11 +46,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
 
   const discount = calculateDiscount(item.originalPrice, item.offerPrice);
   const isProduct = item.itemType === 'PRODUCT';
+  const isOutOfStock = isProduct && (item.isAvailable === false || item.stockQuantity === 0);
   const effectivePrice = item.offerPrice ?? item.originalPrice ?? 0;
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isOutOfStock) return;
     addItem(brand.id, item, 1);
     setIsAdded(true);
     setTimeout(() => {
@@ -61,6 +63,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
   const handleUpdateQty = (e: React.MouseEvent, newQty: number) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isOutOfStock) return;
     updateQuantity(brand.id, item.id, newQty);
   };
 
@@ -88,7 +91,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
                 alt={item.name}
                 fill
                 sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-                className="object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                className={`object-cover group-hover:scale-105 transition-transform duration-500 ease-out ${isOutOfStock ? 'grayscale opacity-75' : ''}`}
                 onError={() => setImageError(true)}
               />
             ) : (
@@ -103,16 +106,24 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
 
             {/* Badges Overlay */}
             <div className="absolute top-1.5 left-1.5 sm:top-2.5 sm:left-2.5 flex flex-col gap-1 z-10">
-              {item.promotionalBadge && (
-                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-wider bg-cyan-950/90 text-cyan-300 border border-cyan-500/40 backdrop-blur-md shadow-md">
-                  <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-cyan-400" />
-                  <span className="truncate max-w-[80px] sm:max-w-none">{item.promotionalBadge}</span>
+              {isOutOfStock ? (
+                <span className="inline-block px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-red-600 text-white shadow-md w-fit uppercase tracking-wider">
+                  Out of Stock
                 </span>
-              )}
-              {discount > 0 && isProduct && (
-                <span className="inline-block px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-cyan-400 text-slate-950 shadow-md w-fit">
-                  {discount}% OFF
-                </span>
+              ) : (
+                <>
+                  {item.promotionalBadge && (
+                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-wider bg-cyan-950/90 text-cyan-300 border border-cyan-500/40 backdrop-blur-md shadow-md">
+                      <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-cyan-400" />
+                      <span className="truncate max-w-[80px] sm:max-w-none">{item.promotionalBadge}</span>
+                    </span>
+                  )}
+                  {discount > 0 && isProduct && (
+                    <span className="inline-block px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-cyan-400 text-slate-950 shadow-md w-fit">
+                      {discount}% OFF
+                    </span>
+                  )}
+                </>
               )}
             </div>
 
@@ -137,8 +148,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
                 <Star className="w-3 h-3 fill-amber-500" />
                 <span>4.9</span>
               </span>
-              <span className="text-[10px] sm:text-[11px] text-cyan-700 dark:text-cyan-400/80 font-medium truncate ml-1">
-                {formatStockDisplay(item.stockQuantity, item.unitType, item.unitValue)}
+              <span className={`text-[10px] sm:text-[11px] font-medium truncate ml-1 ${isOutOfStock ? 'text-red-500 dark:text-red-400 font-bold' : 'text-cyan-700 dark:text-cyan-400/80'}`}>
+                {isOutOfStock ? 'Out of Stock' : formatStockDisplay(item.stockQuantity, item.unitType, item.unitValue)}
               </span>
             </div>
 
@@ -176,7 +187,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
         {/* Action Button Footer */}
         <div className="p-3 pt-0 sm:p-4 sm:pt-0">
           {isProduct ? (
-            currentQuantity > 0 ? (
+            isOutOfStock ? (
+              <button
+                disabled
+                className="w-full py-2 sm:py-2.5 px-2.5 sm:px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold text-[11px] sm:text-xs flex items-center justify-center gap-1.5 border border-slate-200 dark:border-slate-700/60 cursor-not-allowed opacity-60"
+              >
+                <ShoppingBag className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                <span>Out of Stock</span>
+              </button>
+            ) : currentQuantity > 0 ? (
               <div className="flex items-center justify-between bg-cyan-100 dark:bg-cyan-950/90 border border-cyan-300 dark:border-cyan-700/80 rounded-xl p-1">
                 <button
                   onClick={(e) => handleUpdateQty(e, currentQuantity - 1)}
@@ -245,7 +264,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
                 alt={item.name}
                 fill
                 sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-                className="object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                className={`object-cover group-hover:scale-105 transition-transform duration-500 ease-out ${isOutOfStock ? 'grayscale opacity-75' : ''}`}
                 onError={() => setImageError(true)}
               />
             ) : (
@@ -260,16 +279,24 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
 
             {/* Badges */}
             <div className="absolute top-1.5 left-1.5 sm:top-2.5 sm:left-2.5 flex flex-col gap-1 z-10">
-              {item.promotionalBadge && (
-                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-wider bg-orange-950/90 text-amber-300 border border-orange-500/40 backdrop-blur-md shadow-md">
-                  <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-amber-400" />
-                  <span className="truncate max-w-[80px] sm:max-w-none">{item.promotionalBadge}</span>
+              {isOutOfStock ? (
+                <span className="inline-block px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-red-600 text-white shadow-md w-fit uppercase tracking-wider">
+                  Out of Stock
                 </span>
-              )}
-              {discount > 0 && (
-                <span className="inline-block px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-amber-400 text-slate-950 shadow-md w-fit">
-                  {discount}% OFF
-                </span>
+              ) : (
+                <>
+                  {item.promotionalBadge && (
+                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-wider bg-orange-950/90 text-amber-300 border border-orange-500/40 backdrop-blur-md shadow-md">
+                      <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-amber-400" />
+                      <span className="truncate max-w-[80px] sm:max-w-none">{item.promotionalBadge}</span>
+                    </span>
+                  )}
+                  {discount > 0 && (
+                    <span className="inline-block px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-amber-400 text-slate-950 shadow-md w-fit">
+                      {discount}% OFF
+                    </span>
+                  )}
+                </>
               )}
             </div>
 
@@ -294,8 +321,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
                 <Star className="w-3 h-3 fill-amber-500" />
                 <span>4.8</span>
               </span>
-              <span className="text-[10px] sm:text-[11px] text-amber-700 dark:text-amber-400/80 font-medium truncate ml-1">
-                {formatStockDisplay(item.stockQuantity, item.unitType, item.unitValue)}
+              <span className={`text-[10px] sm:text-[11px] font-medium truncate ml-1 ${isOutOfStock ? 'text-red-500 dark:text-red-400 font-bold' : 'text-amber-700 dark:text-amber-400/80'}`}>
+                {isOutOfStock ? 'Out of Stock' : formatStockDisplay(item.stockQuantity, item.unitType, item.unitValue)}
               </span>
             </div>
 
@@ -332,7 +359,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
 
         {/* Action Button Footer */}
         <div className="p-3 pt-0 sm:p-4 sm:pt-0">
-          {currentQuantity > 0 ? (
+          {isOutOfStock ? (
+            <button
+              disabled
+              className="w-full py-2 sm:py-2.5 px-2.5 sm:px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold text-[11px] sm:text-xs flex items-center justify-center gap-1.5 border border-slate-200 dark:border-slate-700/60 cursor-not-allowed opacity-60"
+            >
+              <ShoppingBag className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+              <span>Out of Stock</span>
+            </button>
+          ) : currentQuantity > 0 ? (
             <div className="flex items-center justify-between bg-orange-100 dark:bg-orange-950/90 border border-orange-300 dark:border-orange-700/80 rounded-xl p-1">
               <button
                 onClick={(e) => handleUpdateQty(e, currentQuantity - 1)}
@@ -389,7 +424,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
               alt={item.name}
               fill
               sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-              className="object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+              className={`object-cover group-hover:scale-105 transition-transform duration-500 ease-out ${isOutOfStock ? 'grayscale opacity-75' : ''}`}
               onError={() => setImageError(true)}
             />
           ) : (
@@ -404,16 +439,24 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
 
           {/* Badges */}
           <div className="absolute top-1.5 left-1.5 sm:top-2.5 sm:left-2.5 flex flex-col gap-1 z-10">
-            {item.promotionalBadge && (
-              <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-wider bg-blue-950/90 text-blue-300 border border-blue-500/40 backdrop-blur-md shadow-md">
-                <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-blue-400" />
-                <span className="truncate max-w-[80px] sm:max-w-none">{item.promotionalBadge}</span>
+            {isOutOfStock ? (
+              <span className="inline-block px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-red-600 text-white shadow-md w-fit uppercase tracking-wider">
+                Out of Stock
               </span>
-            )}
-            {discount > 0 && isProduct && (
-              <span className="inline-block px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-blue-600 text-white shadow-md w-fit">
-                {discount}% OFF
-              </span>
+            ) : (
+              <>
+                {item.promotionalBadge && (
+                  <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-wider bg-blue-950/90 text-blue-300 border border-blue-500/40 backdrop-blur-md shadow-md">
+                    <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-blue-400" />
+                    <span className="truncate max-w-[80px] sm:max-w-none">{item.promotionalBadge}</span>
+                  </span>
+                )}
+                {discount > 0 && isProduct && (
+                  <span className="inline-block px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black bg-blue-600 text-white shadow-md w-fit">
+                    {discount}% OFF
+                  </span>
+                )}
+              </>
             )}
           </div>
 
@@ -442,8 +485,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
               <Star className="w-3 h-3 fill-amber-500" />
               <span>4.9</span>
             </span>
-            <span className="text-[10px] sm:text-[11px] text-blue-700 dark:text-blue-400/80 font-medium truncate ml-1">
-              {isProduct ? formatStockDisplay(item.stockQuantity, item.unitType, item.unitValue) : 'Onsite Service'}
+            <span className={`text-[10px] sm:text-[11px] font-medium truncate ml-1 ${isOutOfStock ? 'text-red-500 dark:text-red-400 font-bold' : 'text-blue-700 dark:text-blue-400/80'}`}>
+              {isProduct ? (isOutOfStock ? 'Out of Stock' : formatStockDisplay(item.stockQuantity, item.unitType, item.unitValue)) : 'Onsite Service'}
             </span>
           </div>
 
@@ -483,7 +526,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({ item, brand, onOpenCar
       {/* Action Button Footer */}
       <div className="p-3 pt-0 sm:p-4 sm:pt-0">
         {isProduct ? (
-          currentQuantity > 0 ? (
+          isOutOfStock ? (
+            <button
+              disabled
+              className="w-full py-2 sm:py-2.5 px-2.5 sm:px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold text-[11px] sm:text-xs flex items-center justify-center gap-1.5 border border-slate-200 dark:border-slate-700/60 cursor-not-allowed opacity-60"
+            >
+              <ShoppingBag className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+              <span>Out of Stock</span>
+            </button>
+          ) : currentQuantity > 0 ? (
             <div className="flex items-center justify-between bg-blue-100 dark:bg-blue-950/90 border border-blue-300 dark:border-blue-700/80 rounded-xl p-1">
               <button
                 onClick={(e) => handleUpdateQty(e, currentQuantity - 1)}

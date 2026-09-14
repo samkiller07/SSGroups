@@ -32,19 +32,33 @@ export const useCartStore = create<CartStoreState>()(
 
       addItem: (brandId: BrandId, item: CatalogItem, quantity = 1) => {
         if (quantity <= 0) return;
+        // Out of stock guard: never add products that are unavailable or have 0 stock
+        if (item.itemType === 'PRODUCT' && (item.isAvailable === false || item.stockQuantity === 0)) {
+          return;
+        }
+
         set((state) => {
           const currentItems = state.brandCarts[brandId] || [];
           const existingIndex = currentItems.findIndex((ci) => ci.item.id === item.id);
 
           let updated: CartItem[];
           if (existingIndex >= 0) {
+            const currentQty = currentItems[existingIndex].quantity;
+            let targetQty = currentQty + quantity;
+            if (item.stockQuantity !== null && item.stockQuantity !== undefined && item.stockQuantity > 0) {
+              targetQty = Math.min(targetQty, item.stockQuantity);
+            }
             updated = [...currentItems];
             updated[existingIndex] = {
               ...updated[existingIndex],
-              quantity: updated[existingIndex].quantity + quantity,
+              quantity: targetQty,
             };
           } else {
-            updated = [...currentItems, { item, quantity }];
+            let initialQty = quantity;
+            if (item.stockQuantity !== null && item.stockQuantity !== undefined && item.stockQuantity > 0) {
+              initialQty = Math.min(initialQty, item.stockQuantity);
+            }
+            updated = [...currentItems, { item, quantity: initialQty }];
           }
 
           return {
@@ -80,9 +94,16 @@ export const useCartStore = create<CartStoreState>()(
             };
           }
 
-          const updated = currentItems.map((ci) =>
-            ci.item.id === itemId ? { ...ci, quantity } : ci
-          );
+          const updated = currentItems.map((ci) => {
+            if (ci.item.id === itemId) {
+              const maxStock = ci.item.stockQuantity;
+              const safeQty = (maxStock !== null && maxStock !== undefined && maxStock > 0)
+                ? Math.min(quantity, maxStock)
+                : quantity;
+              return { ...ci, quantity: safeQty };
+            }
+            return ci;
+          });
 
           return {
             brandCarts: {

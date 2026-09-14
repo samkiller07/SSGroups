@@ -134,25 +134,78 @@ export const adminLoginSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
-export const customerCheckoutSchema = z.object({
-  brandId: z.enum(['aquarium', 'kirubai', 'vision-360']),
-  customerName: z.string().min(2, 'Full name must be at least 2 characters').max(100, 'Name is too long'),
-  customerPhone: z
-    .string()
-    .min(10, 'Phone number must be at least 10 digits')
-    .max(16, 'Phone number is too long')
-    .regex(/^\+?[0-9\s-]{10,16}$/, 'Enter a valid phone number (e.g. +91 97917 19662)'),
-  customerEmail: z.string().email('Enter a valid email address for confirmation and invoice delivery'),
-  deliveryMethod: z.enum(['PICKUP', 'HOME_DELIVERY']),
-  customerNote: z.string().max(500, 'Customer note must be under 500 characters').optional().nullable(),
-  items: z
-    .array(
-      z.object({
-        catalogItemId: z.string().min(1, 'Item ID required'),
-        quantity: z.number().int().min(1, 'Quantity must be at least 1'),
-      })
-    )
-    .min(1, 'Your cart is empty. Please add items before checkout.'),
+export const customerCheckoutSchema = z
+  .object({
+    brandId: z.enum(['aquarium', 'kirubai', 'vision-360']),
+    customerName: z.string().min(2, 'Full name must be at least 2 characters').max(100, 'Name is too long'),
+    customerPhone: z
+      .string()
+      .min(10, 'Phone number must be at least 10 digits')
+      .max(16, 'Phone number is too long')
+      .regex(/^\+?[0-9\s-]{10,16}$/, 'Enter a valid Indian phone number (e.g. 9791719662 or +91 97917 19662)'),
+    customerEmail: z.string().email('Enter a valid email address for confirmation and invoice delivery'),
+    deliveryMethod: z.enum(['PICKUP', 'DELIVERY', 'HOME_DELIVERY', 'SHOP_PICKUP']).transform((v) => {
+      if (v === 'HOME_DELIVERY') return 'DELIVERY';
+      if (v === 'SHOP_PICKUP') return 'PICKUP';
+      return v as 'PICKUP' | 'DELIVERY';
+    }),
+    houseNo: z.string().max(100).optional().nullable(),
+    streetArea: z.string().max(200).optional().nullable(),
+    landmark: z.string().max(200).optional().nullable(),
+    city: z.string().max(100).optional().nullable(),
+    pincode: z.string().max(10).optional().nullable(),
+    deliveryNote: z.string().max(500).optional().nullable(),
+    customerNote: z.string().max(500, 'Customer note must be under 500 characters').optional().nullable(),
+    items: z
+      .array(
+        z.object({
+          catalogItemId: z.string().min(1, 'Item ID required'),
+          quantity: z.number().int().min(1, 'Quantity must be at least 1'),
+        })
+      )
+      .min(1, 'Your cart is empty. Please add items before checkout.'),
+  })
+  .superRefine((data, ctx) => {
+    if (data.deliveryMethod === 'DELIVERY') {
+      if (!data.houseNo || data.houseNo.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'House / Door No is required for doorstep delivery.',
+          path: ['houseNo'],
+        });
+      }
+      if (!data.streetArea || data.streetArea.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Street / Area is required for doorstep delivery.',
+          path: ['streetArea'],
+        });
+      }
+      if (!data.city || data.city.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'City is required for doorstep delivery.',
+          path: ['city'],
+        });
+      }
+      if (!data.pincode || !/^[1-9][0-9]{5}$/.test(data.pincode.trim())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Please enter a valid 6-digit postal pincode (e.g. 641012).',
+          path: ['pincode'],
+        });
+      }
+    }
+  });
+
+export const adminDeliveryChargeSchema = z.object({
+  orderId: z.string().min(1, 'Order ID is required'),
+  deliveryCharge: z
+    .number()
+    .min(0, 'Delivery charge cannot be negative')
+    .max(50000, 'Delivery charge exceeds maximum allowed limit')
+    .finite('Delivery charge must be a finite number'),
 });
+
 
 

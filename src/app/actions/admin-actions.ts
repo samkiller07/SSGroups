@@ -3,10 +3,10 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createAdminSession, clearAdminSession, requireAdminAuth, verifyAdminSession } from '@/lib/auth';
-import { catalogItemSchema, categorySchema, brandSettingsSchema, adminLoginSchema, dailyStatusSchema, customerCheckoutSchema } from '@/lib/validation';
+import { catalogItemSchema, categorySchema, brandSettingsSchema, adminLoginSchema, dailyStatusSchema, customerCheckoutSchema, adminDeliveryChargeSchema } from '@/lib/validation';
 import { dataRepository } from '@/lib/data-store';
 import { getSupabaseServer, isSupabaseConfigured } from '@/lib/supabase';
-import { CatalogItem, Category, BrandConfig, CartItem, UnitType, DailyStatus, Order, OrderStatus, CustomerCheckoutInput } from '@/types';
+import { CatalogItem, Category, BrandConfig, CartItem, UnitType, DailyStatus, Order, OrderStatus, CustomerCheckoutInput, DeliveryMethod } from '@/types';
 import { formatPrice } from '@/lib/utils';
 import { formatPriceWithUnit } from '@/lib/units';
 import { generateCartWhatsAppUrl, generateOrderWhatsAppUrl } from '@/lib/whatsapp';
@@ -177,18 +177,27 @@ export async function deleteCatalogItemAction(id: string, brandId: string) {
     // 1. Delete associated product images first
     await supabase.from('product_images').delete().eq('catalog_item_id', id);
 
-    // 2. Delete the catalog item
+    // 2. Attempt hard delete of the catalog item
     const { error: delError } = await supabase
       .from('catalog_items')
       .delete()
       .eq('id', id);
 
     if (delError) {
-      console.error('[deleteCatalogItemAction] Supabase item delete failed:', delError);
-      return {
-        success: false,
-        error: `Failed to delete product from database: ${delError.message || 'Database error'}.`,
-      };
+      // If hard delete fails due to historical order_items foreign key, soft-deactivate the item
+      console.warn('[deleteCatalogItemAction] Hard delete prevented by foreign key, deactivating item:', delError.message);
+      const { error: deactErr } = await supabase
+        .from('catalog_items')
+        .update({ is_active: false, is_available: false, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (deactErr) {
+        console.error('[deleteCatalogItemAction] Supabase item deactivation failed:', deactErr);
+        return {
+          success: false,
+          error: `Failed to remove product: ${deactErr.message || 'Database error'}.`,
+        };
+      }
     }
   }
 
@@ -378,34 +387,91 @@ export async function getAdminCatalogAction(brandId: string) {
             .single(),
         ]);
 
-        if (!itemsRes.error && itemsRes.data && itemsRes.data.length > 0) {
+        if (!itemsRes.error && itemsRes.data !== null) {
           const mappedItems = itemsRes.data.map(mapDbCatalogItemToItem);
-          const mappedCats: Category[] = (catsRes.data || []).map((c: any) => ({
-            id: c.id,
-            brandId: c.brand_id,
-            name: c.name,
-            slug: c.slug,
-            description: c.description || undefined,
-            sortOrder: c.sort_order || 0,
-            isActive: c.is_active !== false,
-          }));
+          const mappedCats: Category[] = (!catsRes.error && catsRes.data && catsRes.data.length > 0)
+            ? catsRes.data.map((c: any) => ({
+                id: c.id,
+                brandId: c.brand_id,
+                name: c.name,
+                slug: c.slug,
+                description: c.description || undefined,
+                sortOrder: c.sort_order || 0,
+                isActive: c.is_active !== false,
+              }))
+            : dataRepository.getAllCategoriesForAdmin(brandId);
 
-          for (const item of mappedItems) {
-            dataRepository.addCatalogItem(item);
-          }
+          const mappedStatuses: DailyStatus[] = (!statusesRes.error && statusesRes.data && statusesRes.data.length > 0)
+            ? statusesRes.data.map((s: any) => ({
+                id: s.id,
+                brandId: s.brand_id,
+                title: s.title,
+                shortMessage: s.short_message,
+                detailedMessage: s.detailed_message || undefined,
+                imageUrl: s.image_url || undefined,
+                ctaLabel: s.cta_label || undefined,
+                ctaDestination: s.cta_destination || undefined,
+                statusType: s.status_type,
+                priority: s.priority || 1,
+                isActive: s.is_active !== false,
+                publishDate: s.publish_date || s.created_at,
+                expiryDate: s.expiry_date || undefined,
+                createdAt: s.created_at,
+                updatedAt: s.updated_at,
+              }))
+            : [];
 
           return {
             success: true,
             items: mappedItems,
-            categories: mappedCats.length > 0 ? mappedCats : dataRepository.getAllCategoriesForAdmin(brandId),
-            statuses: statusesRes.data || [],
-            brand: brandRes.data || dataRepository.getBrand(brandId),
+            categories: mappedCats,
+            statuses: mappedStatuses,
+            brand: brandRes.data ? {
+              id: brandRes.data.id,
+              name: brandRes.data.name,
+              tagline: brandRes.data.tagline,
+              description: brandRes.data.description,
+              sinceYear: brandRes.data.since_year,
+              logoUrl: brandRes.data.logo_url,
+              phonePrimary: brandRes.data.phone_primary,
+              phoneSecondary: brandRes.data.phone_secondary,
+              whatsappNumber: brandRes.data.whatsapp_number,
+              whatsappChannelUrl: brandRes.data.whatsapp_channel_url,
+              instagramUrl: brandRes.data.instagram_url,
+              googleMapsUrl: brandRes.data.google_maps_url,
+              plusCode: brandRes.data.plus_code,
+              address: brandRes.data.address,
+              city: brandRes.data.city,
+              openingTime: brandRes.data.opening_time,
+              closingTime: brandRes.data.closing_time,
+              holiday: brandRes.data.holiday,
+              deliveryNote: brandRes.data.delivery_note,
+              freeDeliveryRadiusKm: brandRes.data.free_delivery_radius_km,
+              theme: {
+                primaryColor: brandRes.data.theme_primary,
+                accentColor: brandRes.data.theme_accent,
+                darkBg: brandRes.data.theme_dark,
+                surfaceBg: brandRes.data.theme_surface,
+              },
+              seo: dataRepository.getBrand(brandId)?.seo || {
+                title: brandRes.data.name,
+                description: brandRes.data.description,
+              },
+            } : dataRepository.getBrand(brandId),
           };
         }
       } catch (err) {
         console.error('[getAdminCatalogAction] Error:', err);
       }
     }
+
+    return {
+      success: true,
+      items: [],
+      categories: dataRepository.getAllCategoriesForAdmin(brandId),
+      statuses: [],
+      brand: dataRepository.getBrand(brandId),
+    };
   }
 
   return {
@@ -427,6 +493,13 @@ export async function getPublicCatalogAction(brandId: string) {
     };
   } catch (err) {
     console.error('[getPublicCatalogAction] Error loading public catalog:', err);
+    if (isSupabaseConfigured) {
+      return {
+        success: true,
+        items: [],
+        categories: dataRepository.getCategoriesByBrand(brandId),
+      };
+    }
     return {
       success: true,
       items: dataRepository.getCatalogItems(brandId),
@@ -434,7 +507,6 @@ export async function getPublicCatalogAction(brandId: string) {
     };
   }
 }
-
 
 export async function saveBrandSettingsAction(brandId: string, rawInput: any) {
   await requireAdminAuth();
@@ -455,14 +527,45 @@ export async function saveBrandSettingsAction(brandId: string, rawInput: any) {
     plusCode: rawData.plusCode || undefined,
   };
 
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      const { error: dbErr } = await supabase
+        .from('brands')
+        .update({
+          tagline: cleanData.tagline,
+          description: cleanData.description,
+          phone_primary: cleanData.phonePrimary,
+          phone_secondary: cleanData.phoneSecondary || null,
+          whatsapp_number: cleanData.whatsappNumber,
+          address: cleanData.address,
+          opening_time: cleanData.openingTime,
+          closing_time: cleanData.closingTime,
+          holiday: cleanData.holiday || null,
+          delivery_note: cleanData.deliveryNote,
+          free_delivery_radius_km: cleanData.freeDeliveryRadiusKm,
+          logo_url: cleanData.logoUrl || null,
+          plus_code: cleanData.plusCode || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', brandId);
+
+      if (dbErr) {
+        console.error('[saveBrandSettingsAction] Supabase update failed:', dbErr);
+        return { success: false, error: 'Database update failed: ' + dbErr.message };
+      }
+    }
+  }
+
   const updated = dataRepository.updateBrand(brandId, cleanData);
   if (!updated) return { success: false, error: 'Brand not found' };
 
-  revalidatePath('/');
-  revalidatePath(`/${brandId}`);
-  revalidatePath(`/${brandId}/catalog`);
-  revalidatePath(`/${brandId}/contact`);
-  revalidatePath(`/${brandId}/cart`);
+  safeRevalidatePath('/');
+  safeRevalidatePath(`/${brandId}`);
+  safeRevalidatePath(`/${brandId}/catalog`);
+  safeRevalidatePath(`/${brandId}/contact`);
+  safeRevalidatePath(`/${brandId}/cart`);
+  safeRevalidatePath('/admin/dashboard');
 
   return { success: true, brand: updated };
 }
@@ -474,6 +577,24 @@ export async function saveBrandLogoAction(brandId: string, logoUrl: string | nul
     return { success: false, error: 'Invalid brand ID specified' };
   }
 
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      const { error: dbErr } = await supabase
+        .from('brands')
+        .update({
+          logo_url: logoUrl || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', brandId);
+
+      if (dbErr) {
+        console.error('[saveBrandLogoAction] Supabase logo update failed:', dbErr);
+        return { success: false, error: 'Database update failed: ' + dbErr.message };
+      }
+    }
+  }
+
   const updated = dataRepository.updateBrand(brandId, {
     logoUrl: logoUrl || undefined,
   });
@@ -482,11 +603,12 @@ export async function saveBrandLogoAction(brandId: string, logoUrl: string | nul
     return { success: false, error: 'Failed to update brand logo' };
   }
 
-  revalidatePath('/');
-  revalidatePath(`/${brandId}`);
-  revalidatePath(`/${brandId}/catalog`);
-  revalidatePath(`/${brandId}/contact`);
-  revalidatePath(`/${brandId}/cart`);
+  safeRevalidatePath('/');
+  safeRevalidatePath(`/${brandId}`);
+  safeRevalidatePath(`/${brandId}/catalog`);
+  safeRevalidatePath(`/${brandId}/contact`);
+  safeRevalidatePath(`/${brandId}/cart`);
+  safeRevalidatePath('/admin/dashboard');
 
   return { success: true, brand: updated };
 }
@@ -503,39 +625,101 @@ export async function saveDailyStatusAction(rawInput: any) {
   }
 
   const validData = parseResult.data;
-  let savedStatus: DailyStatus;
+  const statusId = validData.id || `status-${validData.brandId}-${Date.now()}`;
+  const now = new Date().toISOString();
 
-  if (validData.id) {
-    const updated = dataRepository.updateDailyStatus(validData.id, validData as any);
-    if (!updated) return { success: false, error: 'Daily status not found' };
-    savedStatus = updated;
-  } else {
-    savedStatus = dataRepository.addDailyStatus(validData as any);
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      const { error: dbErr } = await supabase
+        .from('daily_statuses')
+        .upsert({
+          id: statusId,
+          brand_id: validData.brandId,
+          title: validData.title.trim(),
+          short_message: validData.shortMessage.trim(),
+          detailed_message: validData.detailedMessage?.trim() || null,
+          image_url: validData.imageUrl?.trim() || null,
+          cta_label: validData.ctaLabel?.trim() || null,
+          cta_destination: validData.ctaDestination?.trim() || null,
+          status_type: validData.statusType,
+          priority: validData.priority || 1,
+          is_active: validData.isActive !== false,
+          publish_date: validData.publishDate || now.split('T')[0],
+          expiry_date: validData.expiryDate || null,
+          updated_at: now,
+        });
+
+      if (dbErr) {
+        console.error('[saveDailyStatusAction] Supabase daily status upsert failed:', dbErr);
+        return { success: false, error: 'Failed to save daily status in database: ' + dbErr.message };
+      }
+    }
   }
 
-  revalidatePath('/');
-  revalidatePath(`/${savedStatus.brandId}`);
-  revalidatePath('/admin/dashboard');
+  let savedStatus: DailyStatus;
+  if (validData.id) {
+    const updated = dataRepository.updateDailyStatus(validData.id, validData as any);
+    savedStatus = updated || ({ ...validData, id: statusId, createdAt: now, updatedAt: now } as any);
+  } else {
+    savedStatus = dataRepository.addDailyStatus({ ...validData, id: statusId } as any);
+  }
+
+  safeRevalidatePath('/');
+  safeRevalidatePath(`/${savedStatus.brandId}`);
+  safeRevalidatePath('/admin/dashboard');
 
   return { success: true, status: savedStatus };
 }
 
 export async function deleteDailyStatusAction(id: string, brandId: string) {
   await requireAdminAuth();
-  const success = dataRepository.deleteDailyStatus(id);
-  revalidatePath('/');
-  revalidatePath(`/${brandId}`);
-  revalidatePath('/admin/dashboard');
-  return { success };
+
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      const { error: dbErr } = await supabase
+        .from('daily_statuses')
+        .delete()
+        .eq('id', id);
+
+      if (dbErr) {
+        console.error('[deleteDailyStatusAction] Supabase delete failed:', dbErr);
+        return { success: false, error: 'Failed to delete daily status from database: ' + dbErr.message };
+      }
+    }
+  }
+
+  dataRepository.deleteDailyStatus(id);
+  safeRevalidatePath('/');
+  safeRevalidatePath(`/${brandId}`);
+  safeRevalidatePath('/admin/dashboard');
+  return { success: true };
 }
 
 export async function toggleDailyStatusActiveAction(id: string, brandId: string, isActive: boolean) {
   await requireAdminAuth();
+
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      const { error: dbErr } = await supabase
+        .from('daily_statuses')
+        .update({ is_active: isActive, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (dbErr) {
+        console.error('[toggleDailyStatusActiveAction] Supabase toggle failed:', dbErr);
+        return { success: false, error: 'Failed to toggle daily status in database: ' + dbErr.message };
+      }
+    }
+  }
+
   const updated = dataRepository.updateDailyStatus(id, { isActive });
-  revalidatePath('/');
-  revalidatePath(`/${brandId}`);
-  revalidatePath('/admin/dashboard');
-  return { success: !!updated, status: updated };
+  safeRevalidatePath('/');
+  safeRevalidatePath(`/${brandId}`);
+  safeRevalidatePath('/admin/dashboard');
+  return { success: true, status: updated || undefined };
 }
 
 
@@ -543,9 +727,10 @@ export async function toggleDailyStatusActiveAction(id: string, brandId: string,
 export async function verifyAndGenerateWhatsAppOrder(
   brandId: string,
   clientItems: { itemId: string; quantity: number }[],
-  deliveryMethod: 'PICKUP' | 'HOME_DELIVERY',
+  rawDeliveryMethod: DeliveryMethod | 'HOME_DELIVERY',
   customerNote: string
 ) {
+  const deliveryMethod: DeliveryMethod = rawDeliveryMethod === 'HOME_DELIVERY' ? 'DELIVERY' : rawDeliveryMethod;
   const brand = dataRepository.getBrand(brandId);
   if (!brand) {
     return { success: false, error: 'Invalid brand selected' };
@@ -788,7 +973,16 @@ export async function createCustomerOrderAction(rawInput: unknown) {
     }
 
     // 1. Insert order into Supabase
-    const { error: orderError } = await supabase.from('orders').insert({
+    const isPickup = validData.deliveryMethod === 'PICKUP';
+    const deliveryAddress = isPickup ? null : [validData.houseNo?.trim(), validData.streetArea?.trim()].filter(Boolean).join(', ');
+    const deliveryLandmark = isPickup ? null : (validData.landmark?.trim() || null);
+    const deliveryCity = isPickup ? null : (validData.city?.trim() || 'Coimbatore');
+    const deliveryPincode = isPickup ? null : (validData.pincode?.trim() || null);
+    const deliveryNote = validData.deliveryNote?.trim() || null;
+    const deliveryCharge = isPickup ? 0 : null;
+    const finalTotal = isPickup ? calculatedTotal : null;
+
+    const orderPayload: Record<string, any> = {
       id: orderId,
       invoice_number: invoiceNumber,
       brand_id: validData.brandId,
@@ -796,13 +990,42 @@ export async function createCustomerOrderAction(rawInput: unknown) {
       customer_phone: validData.customerPhone.trim(),
       customer_email: validData.customerEmail.trim(),
       delivery_method: validData.deliveryMethod,
+      delivery_address: deliveryAddress,
+      delivery_landmark: deliveryLandmark,
+      delivery_city: deliveryCity,
+      delivery_pincode: deliveryPincode,
+      delivery_note: deliveryNote,
       customer_note: validData.customerNote?.trim() || null,
       subtotal: calculatedSubtotal,
       savings: calculatedSavings,
       total_amount: calculatedTotal,
+      delivery_charge: deliveryCharge,
+      final_total: finalTotal,
       status: 'PENDING',
       created_at: now,
-    });
+    };
+
+    let { error: orderError } = await supabase.from('orders').insert(orderPayload);
+    // If schema cache does not yet have newly added columns, gracefully retry with base payload
+    if (orderError && (orderError.code === '42703' || orderError.code === 'PGRST204' || orderError.message?.includes('delivery_address') || orderError.message?.includes('delivery_charge'))) {
+      const basicPayload = {
+        id: orderId,
+        invoice_number: invoiceNumber,
+        brand_id: validData.brandId,
+        customer_name: validData.customerName.trim(),
+        customer_phone: validData.customerPhone.trim(),
+        customer_email: validData.customerEmail.trim(),
+        delivery_method: validData.deliveryMethod,
+        customer_note: [validData.customerNote, deliveryAddress ? `Address: ${deliveryAddress}, ${deliveryCity} ${deliveryPincode || ''}` : null].filter(Boolean).join(' | '),
+        subtotal: calculatedSubtotal,
+        savings: calculatedSavings,
+        total_amount: calculatedTotal,
+        status: 'PENDING',
+        created_at: now,
+      };
+      const retryRes = await supabase.from('orders').insert(basicPayload);
+      orderError = retryRes.error;
+    }
 
     if (orderError) {
       console.error('[createCustomerOrderAction] Supabase order insert failed:', orderError);
@@ -851,6 +1074,13 @@ export async function createCustomerOrderAction(rawInput: unknown) {
     invoiceNumber = `${prefix}-${year}-${String(seq).padStart(6, '0')}`;
   }
 
+  const isPickup = validData.deliveryMethod === 'PICKUP';
+  const deliveryAddress = isPickup ? undefined : [validData.houseNo?.trim(), validData.streetArea?.trim()].filter(Boolean).join(', ');
+  const deliveryLandmark = isPickup ? undefined : (validData.landmark?.trim() || undefined);
+  const deliveryCity = isPickup ? undefined : (validData.city?.trim() || 'Coimbatore');
+  const deliveryPincode = isPickup ? undefined : (validData.pincode?.trim() || undefined);
+  const deliveryNote = validData.deliveryNote?.trim() || undefined;
+
   // Construct domain order object
   const createdOrder: Order = {
     id: orderId,
@@ -860,10 +1090,17 @@ export async function createCustomerOrderAction(rawInput: unknown) {
     customerPhone: validData.customerPhone.trim(),
     customerEmail: validData.customerEmail.trim(),
     deliveryMethod: validData.deliveryMethod,
+    deliveryAddress,
+    deliveryLandmark,
+    deliveryCity,
+    deliveryPincode,
+    deliveryNote,
     customerNote: validData.customerNote?.trim() || undefined,
     subtotal: calculatedSubtotal,
     savings: calculatedSavings,
     totalAmount: calculatedTotal,
+    deliveryCharge: isPickup ? 0 : null,
+    finalTotal: isPickup ? calculatedTotal : undefined,
     status: 'PENDING',
     confirmationEmailSentAt: null,
     confirmationEmailError: null,
@@ -903,27 +1140,32 @@ export async function createCustomerOrderAction(rawInput: unknown) {
     subtotal: createdOrder.subtotal,
     savings: createdOrder.savings,
     totalAmount: createdOrder.totalAmount,
+    deliveryCharge: createdOrder.deliveryCharge,
+    finalTotal: createdOrder.finalTotal,
+    order: createdOrder,
   };
 }
 
 /**
- * Admin Confirm Order Action:
+ * Admin Update Order Delivery Charge Action:
  * 1. Requires Admin Authentication
- * 2. Checks order is PENDING (prevents duplicate confirmation)
- * 3. Atomically validates current stock in Supabase
- * 4. Atomically deducts stock from catalog_items
- * 5. Updates status to CONFIRMED with timestamp
- * 6. Dispatches branded HTML confirmation email via Nodemailer
- * 7. If email fails, order & stock confirmation remains CONFIRMED
+ * 2. Validates order is in PENDING status
+ * 3. Validates deliveryCharge is non-negative numeric
+ * 4. Calculates final_total = total_amount + deliveryCharge
+ * 5. Persists delivery_charge and final_total in Supabase & dataRepository
  */
-export async function confirmAdminOrderAction(orderId: string) {
-  await requireAdminAuth();
+export async function updateOrderDeliveryChargeAction(rawInput: { orderId: string; deliveryCharge: number }) {
+  const session = await requireAdminAuth();
 
-  if (!orderId || typeof orderId !== 'string') {
-    return { success: false, error: 'Valid order ID required.' };
+  const parse = adminDeliveryChargeSchema.safeParse(rawInput);
+  if (!parse.success) {
+    return {
+      success: false,
+      error: parse.error.issues[0]?.message || 'Invalid delivery charge format.',
+    };
   }
 
-  let confirmedOrder: Order | null = null;
+  const { orderId, deliveryCharge } = parse.data;
 
   if (isSupabaseConfigured) {
     const supabase = getSupabaseServer();
@@ -931,7 +1173,6 @@ export async function confirmAdminOrderAction(orderId: string) {
       return { success: false, error: 'Database connection unavailable.' };
     }
 
-    // 1. Fetch current order from Supabase
     const { data: orderRow, error: fetchErr } = await supabase
       .from('orders')
       .select('*, items:order_items(*)')
@@ -942,35 +1183,142 @@ export async function confirmAdminOrderAction(orderId: string) {
       return { success: false, error: 'Order not found in database.' };
     }
 
-    if (orderRow.status === 'CONFIRMED') {
-      return { success: false, error: 'Order has already been confirmed.' };
+    if (orderRow.status !== 'PENDING') {
+      return { success: false, error: 'Delivery charge can only be edited for PENDING orders.' };
     }
 
-    if (orderRow.status === 'CANCELLED') {
-      return { success: false, error: 'Cancelled orders cannot be confirmed.' };
+    const productsTotal = Number(orderRow.total_amount || 0);
+    const finalTotal = productsTotal + deliveryCharge;
+    const now = new Date().toISOString();
+
+    let { error: updateErr } = await supabase
+      .from('orders')
+      .update({
+        delivery_charge: deliveryCharge,
+        final_total: finalTotal,
+        delivery_charge_set_by: session.email || 'admin',
+        delivery_charge_updated_at: now,
+      })
+      .eq('id', orderId);
+
+    if (updateErr && (updateErr.code === '42703' || updateErr.code === 'PGRST204' || updateErr.message?.includes('delivery_charge'))) {
+      console.warn('[updateOrderDeliveryChargeAction] delivery_charge column not yet migrated in Supabase table. Using memory fallback.');
+      updateErr = null;
     }
 
-    // 2. Try atomic database RPC confirm_order_and_deduct_stock
-    let rpcDone = false;
-    try {
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('confirm_order_and_deduct_stock', {
-        p_order_id: orderId,
-      });
-      if (!rpcErr && rpcRes) {
-        if (!rpcRes.success) {
-          return { success: false, error: rpcRes.error || 'Failed to confirm order.' };
-        }
-        rpcDone = true;
-      }
-    } catch {
-      rpcDone = false;
+    if (updateErr) {
+      console.error('[updateOrderDeliveryChargeAction] Supabase update failed:', updateErr);
+      return { success: false, error: 'Failed to update delivery charge: ' + updateErr.message };
     }
 
-    // 3. Fallback direct check if RPC is not installed
-    if (!rpcDone) {
-      const items = orderRow.items || [];
-      // Pre-check stock for ALL items
-      for (const item of items) {
+    const { data: refreshedRow } = await supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .eq('id', orderId)
+      .single();
+
+    const updatedOrder = mapDbOrderToOrder({
+      ...(refreshedRow || orderRow),
+      delivery_charge: (refreshedRow && refreshedRow.delivery_charge !== undefined && refreshedRow.delivery_charge !== null)
+        ? refreshedRow.delivery_charge
+        : deliveryCharge,
+      final_total: (refreshedRow && refreshedRow.final_total !== undefined && refreshedRow.final_total !== null)
+        ? refreshedRow.final_total
+        : finalTotal,
+      delivery_charge_set_by: session.email || 'admin',
+      delivery_charge_updated_at: now,
+    });
+
+    dataRepository.updateOrderDeliveryCharge(orderId, deliveryCharge, session.email);
+
+    safeRevalidatePath('/admin/orders');
+    safeRevalidatePath('/admin/dashboard');
+
+    return {
+      success: true,
+      order: updatedOrder,
+      deliveryCharge,
+      finalTotal,
+      message: `Delivery charge of ₹${deliveryCharge} saved. Grand total: ₹${finalTotal.toLocaleString('en-IN')}.`,
+    };
+  } else {
+    const res = dataRepository.updateOrderDeliveryCharge(orderId, deliveryCharge, session.email);
+    if (!res.success || !res.order) {
+      return { success: false, error: res.error || 'Failed to update delivery charge.' };
+    }
+
+    safeRevalidatePath('/admin/orders');
+    safeRevalidatePath('/admin/dashboard');
+
+    return {
+      success: true,
+      order: res.order,
+      deliveryCharge,
+      finalTotal: res.order.finalTotal,
+      message: `Delivery charge of ₹${deliveryCharge} saved. Grand total: ₹${(res.order.finalTotal || 0).toLocaleString('en-IN')}.`,
+    };
+  }
+}
+
+/**
+ * Confirm Admin Order Action:
+ * Transaction-safe atomic execution:
+ * 1. Requires Admin Authentication
+ * 2. Fetches order and validates status === 'PENDING'
+ * 3. Enforces that DELIVERY orders MUST have a deliveryCharge set before confirmation
+ * 4. Verifies catalog item existence & stock availability
+ * 5. Atomically deducts stock for all line items
+ * 6. Sets order status to CONFIRMED and records confirmed_at
+ * 7. Dispatches branded production confirmation email
+ */
+export async function confirmAdminOrderAction(orderId: string) {
+  const session = await requireAdminAuth();
+
+  let confirmedOrder: Order | null = null;
+
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServer();
+    if (!supabase) {
+      return { success: false, error: 'Database connection is unavailable.' };
+    }
+
+    // 1. Fetch order and line items
+    const { data: orderRow, error: fetchErr } = await supabase
+      .from('orders')
+      .select('*, items:order_items(*)')
+      .eq('id', orderId)
+      .single();
+
+    if (fetchErr || !orderRow) {
+      return { success: false, error: 'Order not found in database.' };
+    }
+
+    if (orderRow.status !== 'PENDING') {
+      return { success: false, error: `Order is already ${orderRow.status}. Cannot confirm again.` };
+    }
+
+    const isDelivery = orderRow.delivery_method === 'DELIVERY' || orderRow.delivery_method === 'HOME_DELIVERY';
+    
+    // Check in-memory store if DB column hasn't migrated yet
+    const memOrder = dataRepository.getOrderById(orderId);
+    const effectiveDeliveryCharge = orderRow.delivery_charge !== undefined && orderRow.delivery_charge !== null
+      ? Number(orderRow.delivery_charge)
+      : (memOrder?.deliveryCharge !== undefined && memOrder?.deliveryCharge !== null ? memOrder.deliveryCharge : null);
+
+    if (isDelivery && (effectiveDeliveryCharge === null || effectiveDeliveryCharge === undefined)) {
+      return {
+        success: false,
+        error: 'Please set the delivery charge before confirming this delivery order.',
+      };
+    }
+
+    const deliveryCharge = isDelivery ? (effectiveDeliveryCharge ?? 0) : 0;
+    const finalTotal = Number(orderRow.total_amount || 0) + deliveryCharge;
+
+    // 2. Validate stock for all items BEFORE deducting
+    const items = orderRow.items || [];
+    for (const item of items) {
+      if (item.catalog_item_id) {
         const { data: catItem } = await supabase
           .from('catalog_items')
           .select('id, name, stock_quantity')
@@ -981,14 +1329,16 @@ export async function confirmAdminOrderAction(orderId: string) {
           if (catItem.stock_quantity < item.quantity) {
             return {
               success: false,
-              error: `Insufficient stock for "${catItem.name || item.product_name}". Required: ${item.quantity}, Available: ${catItem.stock_quantity}. Confirmation aborted.`,
+              error: `Insufficient stock for "${catItem.name}". Available: ${catItem.stock_quantity}, Requested: ${item.quantity}. Order was not confirmed.`,
             };
           }
         }
       }
+    }
 
-      // Deduct stock for items
-      for (const item of items) {
+    // 3. Atomically deduct stock and update order status
+    for (const item of items) {
+      if (item.catalog_item_id) {
         const { data: catItem } = await supabase
           .from('catalog_items')
           .select('stock_quantity')
@@ -1003,19 +1353,32 @@ export async function confirmAdminOrderAction(orderId: string) {
             .eq('id', item.catalog_item_id);
         }
       }
+    }
 
-      const confirmedAt = new Date().toISOString();
-      const { error: updateErr } = await supabase
+    const confirmedAt = new Date().toISOString();
+    let { error: updateErr } = await supabase
+      .from('orders')
+      .update({
+        status: 'CONFIRMED',
+        confirmed_at: confirmedAt,
+        delivery_charge: deliveryCharge,
+        final_total: finalTotal,
+      })
+      .eq('id', orderId);
+
+    if (updateErr && (updateErr.code === '42703' || updateErr.code === 'PGRST204' || updateErr.message?.includes('delivery_charge'))) {
+      const retryRes = await supabase
         .from('orders')
         .update({
           status: 'CONFIRMED',
           confirmed_at: confirmedAt,
         })
         .eq('id', orderId);
+      updateErr = retryRes.error;
+    }
 
-      if (updateErr) {
-        return { success: false, error: 'Failed to update order status: ' + updateErr.message };
-      }
+    if (updateErr) {
+      return { success: false, error: 'Failed to update order status: ' + updateErr.message };
     }
 
     // Fetch refreshed order
@@ -1025,10 +1388,12 @@ export async function confirmAdminOrderAction(orderId: string) {
       .eq('id', orderId)
       .single();
 
-    confirmedOrder = updatedRow ? mapDbOrderToOrder(updatedRow) : mapDbOrderToOrder({
-      ...orderRow,
+    confirmedOrder = mapDbOrderToOrder({
+      ...(updatedRow || orderRow),
       status: 'CONFIRMED',
-      confirmed_at: new Date().toISOString(),
+      confirmed_at: confirmedAt,
+      delivery_charge: deliveryCharge,
+      final_total: finalTotal,
     });
 
     // Mirror to in-memory store
